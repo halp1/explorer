@@ -184,7 +184,8 @@ public enum Sorter {
         if days == 0 { return ("today", "Today", 0) }
         if days == 1 { return ("yesterday", "Yesterday", 1) }
         if days <= 7 { return ("7", "Previous 7 Days", 2) }
-        if days < 30 { return ("30", "Previous 30 Days", 3) }
+        let monthAgo = cal.date(byAdding: .month, value: -1, to: cal.startOfDay(for: now)) ?? now
+        if d >= monthAgo { return ("30", "Previous 30 Days", 3) }
         let comps = cal.dateComponents([.year, .month], from: d)
         let nowYear = cal.component(.year, from: now)
         if comps.year == nowYear {

@@ -79,6 +79,8 @@
 	<string>13.0</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Explorer sends Apple Events to Finder and other apps to set comments, create documents and run your Actions.</string>
+	<key>NSAccentColorName</key>
+	<string>AccentColor</string>
 	<key>NSAppleScriptEnabled</key>
 	<true/>
 	<key>NSBonjourServices</key>

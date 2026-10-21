@@ -36,6 +36,16 @@ enum DebugSnapshot {
         case "settings": AppDelegate.shared.showSettingsTab(SettingsTab(rawValue: arg) ?? .general)
         case "shelf": c.shelf.open()
         case "search": c.state.search(arg)
+        case "size":
+            let wh = arg.split(separator: "x").compactMap { Double($0) }
+            if wh.count == 2, let w = c.window { var f = w.frame; f.size = NSSize(width: wh[0], height: wh[1]); w.setFrame(f, display: true) }
+        case "origin":
+            let xy = arg.split(separator: "x").compactMap { Double($0) }
+            if xy.count == 2, let w = c.window, let scr = w.screen ?? NSScreen.main {
+                // top-left in screen coordinates (like CGWindow bounds)
+                w.setFrameTopLeftPoint(NSPoint(x: xy[0], y: scr.frame.maxY - xy[1]))
+            }
+        case "sort": if let k = SortKey(rawValue: arg) { c.state.options.sortKey = k }
         case "hidden": c.state.options.showHidden = arg == "1"
         default: break
         }

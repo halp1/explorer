@@ -14,33 +14,59 @@ enum TreeBuilder {
     static func sections(network: MountableBrowser?) -> [TreeNode] {
         let prefs = Preferences.shared
         var out: [TreeNode] = []
+        func top(_ n: TreeNode, _ s: SidebarSection) -> TreeNode {
+            n.isTopLevel = true; n.parent = nil; n.sectionID = s.id
+            if n.color == nil { n.color = color(s.colorIndex) }
+            return n
+        }
         for s in prefs.sidebarSections where !s.disabled {
-            let n: TreeNode
-            if s.id == "home" {
-                n = TreeNode(.folder(prefs.homeURL), title: s.label, symbol: s.icon)
-                n.children = nil
-            } else {
-                n = TreeNode(.section(s.id), title: s.label, symbol: s.icon)
+            switch s.id {
+            case "home":
+                // The home folder itself is the top-level row; children load lazily.
+                let n = TreeNode(.folder(prefs.homeURL), title: "Home", symbol: "house")
+                out.append(top(n, s))
+            case "hd", "ed", "nd", "idevice":
+                // Every drive / share / device is its own top-level row (eject buttons where applicable).
+                for d in children(ofSection: s.id, network: network) { out.append(top(d, s)) }
+            case "icloud":
+                guard let u = Volumes.iCloudDrive else { continue }
+                let n = TreeBuilder.folderNode(u, title: "iCloud Drive"); n.symbol = "icloud"
+                out.append(top(n, s))
+            case "cs":
+                let u = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/CloudStorage", isDirectory: true)
+                guard FileManager.default.fileExists(atPath: u.path) else { continue }
+                let n = TreeBuilder.folderNode(u, title: "Cloud Storage"); n.symbol = "globe.americas"; n.children = []
+                out.append(top(n, s))
+            case "recent":
+                let n = TreeNode(.smart(.recent(days: prefs.recentDays)), title: "Recent Files", symbol: "clock")
+                n.children = []
+                out.append(top(n, s))
+            case "trash":
+                let n = TreeNode(.folder(Volumes.userTrash), title: "Trash", symbol: "trash")
+                out.append(top(n, s))
+            default:
+                // Groups with their own children: Favorites, Remote connections, Tags, Star ratings, Saved searches.
+                let n = TreeNode(.section(s.id), title: displayTitle(s), symbol: s.icon)
+                n.children = children(ofSection: s.id, network: network)
+                for c in n.children ?? [] { c.parent = n; c.sectionID = s.id; c.color = c.color ?? color(s.colorIndex) }
+                // Empty groups are hidden, as in the original (no remote hosts / ratings / saved searches yet).
+                if ["remote", "ratings", "searches"].contains(s.id), n.children?.isEmpty ?? true { continue }
+                if s.id == "favorites" { n.color = .systemYellow; n.symbol = "star.fill" }
+                out.append(top(n, s))
             }
-            n.isTopLevel = true
-            n.color = color(s.colorIndex)
-            n.sectionID = s.id
-            if s.id != "home" { n.children = children(ofSection: s.id, network: network) }
-            if s.id == "hd" || s.id == "ed" {
-                // Flatten: each drive becomes a top-level node of its own.
-                for d in n.children ?? [] {
-                    d.isTopLevel = true; d.parent = nil; d.sectionID = s.id; d.color = color(s.colorIndex)
-                    out.append(d)
-                }
-                continue
-            }
-            for c in n.children ?? [] { c.parent = n; c.sectionID = s.id; c.color = c.color ?? n.color }
-            // Hide empty device-type sections like the original (no external drives → no node)
-            if ["ed", "nd", "idevice", "cs", "remote"].contains(s.id), n.children?.isEmpty ?? true { continue }
-            if s.id == "favorites" { n.color = .systemYellow; n.symbol = "star.fill" }
-            out.append(n)
         }
         return out
+    }
+
+    /// Row titles as the original shows them (the Settings labels are more descriptive).
+    static func displayTitle(_ s: SidebarSection) -> String {
+        switch s.id {
+        case "tags": return "Tags"
+        case "ratings": return "Star Ratings"
+        case "searches": return "Saved Searches"
+        case "remote": return "Remote Connections"
+        default: return s.label
+        }
     }
 
     static func children(ofSection id: String, network: MountableBrowser?) -> [TreeNode] {
@@ -105,6 +131,7 @@ enum TreeBuilder {
             }
             return nodes
         case "ratings":
+            guard RatingsProbe.anyRated else { return [] }
             return (1...5).reversed().map { r in
                 TreeNode(.smart(.rating(r)), title: String(repeating: "★", count: r) + String(repeating: "☆", count: 5 - r), symbol: "star")
             }
@@ -205,7 +232,7 @@ enum TreeBuilder {
 enum ThemeColors {
     static var theme: NSColor {
         switch Preferences.shared.themeColor {
-        case .accent: return .controlAccentColor
+        case .accent: return NSColor(named: "AccentColor") ?? .controlAccentColor
         case .blue: return .systemBlue
         case .purple: return .systemPurple
         case .pink: return .systemPink
@@ -215,5 +242,19 @@ enum ThemeColors {
         case .green: return .systemGreen
         case .graphite: return .systemGray
         }
+    }
+}
+
+
+/// Whether any file has a star rating (Spotlight), refreshed at most once a minute.
+enum RatingsProbe {
+    nonisolated(unsafe) static var cached: (Date, Bool)?
+    static var anyRated: Bool {
+        if let c = cached, Date().timeIntervalSince(c.0) < 60 { return c.1 }
+        let q = MDQueryCreate(nil, "kMDItemStarRating >= 1" as CFString, nil, nil)
+        var found = false
+        if let q, MDQueryExecute(q, CFOptionFlags(kMDQuerySynchronous.rawValue)) { found = MDQueryGetResultCount(q) > 0 }
+        cached = (Date(), found)
+        return found
     }
 }

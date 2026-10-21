@@ -45,6 +45,7 @@ final class TreeNode: NSObject {
         switch kind {
         case .folder(let u):
             if let (udid, path) = IDeviceRegistry.parseVirtual(u) { return .device(udid: udid, path: path) }
+            if u.standardizedFileURL.path == Volumes.userTrash.standardizedFileURL.path { return .trash }
             return .directory(u)
         case .archiveDir(let u, let inner): return .archive(u, inner: inner)
         case .smart(let n): return .smart(n)
@@ -52,6 +53,8 @@ final class TreeNode: NSObject {
         default: return nil
         }
     }
+
+    var isFavoritesSection: Bool { if case .section("favorites") = kind { return true }; return false }
 
     var isNodeSelectable: Bool { location != nil || { if case .share = kind { return true }; if case .remoteHost = kind { return true }; return false }() }
 
@@ -73,10 +76,12 @@ final class TreeNode: NSObject {
         if let c = subfolderCache[u.path], Date().timeIntervalSince(c.1) < 5 { return c.0 }
         let prefs = Preferences.shared
         var result = false
-        if let e = try? FileManager.default.contentsOfDirectory(at: u, includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey], options: prefs.showHiddenInTree ? [] : [.skipsHiddenFiles]) {
+        if let e = try? FileManager.default.contentsOfDirectory(at: u, includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey, .isSymbolicLinkKey], options: prefs.showHiddenInTree ? [] : [.skipsHiddenFiles]) {
             for c in e.prefix(4000) {
-                let v = try? c.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
-                if v?.isDirectory == true && (v?.isPackage != true || prefs.showPackagesInTree) { result = true; break }
+                let v = try? c.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey, .isSymbolicLinkKey])
+                var isDir = v?.isDirectory == true
+                if v?.isSymbolicLink == true { var d: ObjCBool = false; isDir = FileManager.default.fileExists(atPath: c.path, isDirectory: &d) && d.boolValue }
+                if isDir && (v?.isPackage != true || prefs.showPackagesInTree) { result = true; break }
                 if prefs.showArchivesInTree, ArchiveFormat.detect(fileName: c.lastPathComponent) != nil { result = true; break }
             }
         }

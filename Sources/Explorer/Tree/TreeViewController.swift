@@ -38,12 +38,19 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         outline.target = self
         outline.action = #selector(clicked)
         scroll.documentView = outline
+        scroll.contentView.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.automaticallyAdjustsContentInsets = true
-        scroll.autohidesScrollers = false
-        scroll.scrollerStyle = .legacy
+        scroll.autohidesScrollers = true
         scroll.drawsBackground = false
-        view = scroll
+        let root = TintedSidebarView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: root.topAnchor), scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+        ])
+        view = root
 
         let nc = NSWorkspace.shared.notificationCenter
         for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification, NSWorkspace.didRenameVolumeNotification] {
@@ -64,7 +71,7 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         super.viewDidLayout()
         // The sidebar only gets its real width after layout; keep the single column filling it.
         if Preferences.shared.truncateFolders != .none, let col = outline.tableColumns.first {
-            let w = scroll.contentView.bounds.width
+            let w = scroll.contentView.bounds.width - outline.intercellSpacing.width
             if w > 0, abs(col.width - w) > 1 { col.width = w }
         }
     }
@@ -201,7 +208,7 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         let n = item as! TreeNode
         let base = ov.rowHeight
         // Extra breathing room above each top-level group after the first (as in the original sidebar).
-        if n.isTopLevel, let i = roots.firstIndex(of: n), i > 1 { return base + 10 }
+        if n.isTopLevel, let i = roots.firstIndex(of: n), i > 0 { return base + 6 }
         return base
     }
 
@@ -412,7 +419,8 @@ final class TreeCell: NSTableCellView {
         identifier = Self.id
         [icon, label, eject].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
         eject.isBordered = false
-        eject.image = NSImage(systemSymbolName: "eject.fill", accessibilityDescription: "Eject")
+        eject.image = NSImage(systemSymbolName: "eject.fill", accessibilityDescription: "Eject")?.withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
+        eject.contentTintColor = .secondaryLabelColor
         eject.target = self
         eject.action = #selector(ejectTapped)
         label.cell?.usesSingleLineMode = true
@@ -425,9 +433,9 @@ final class TreeCell: NSTableCellView {
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
             label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
             label.trailingAnchor.constraint(equalTo: eject.leadingAnchor, constant: -4),
-            eject.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            eject.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             eject.centerYAnchor.constraint(equalTo: label.centerYAnchor),
-            eject.widthAnchor.constraint(equalToConstant: 14),
+            eject.widthAnchor.constraint(equalToConstant: 16),
         ])
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
@@ -440,8 +448,9 @@ final class TreeCell: NSTableCellView {
         label.lineBreakMode = ItemStyle.truncation(p.truncateFolders)
         let bold = n.isTopLevel && p.boldTopLevel
         // Top-level rows read like the original: same size as children, slightly bolder, secondary colour.
-        label.font = .systemFont(ofSize: 13 + CGFloat(p.fontSizeDelta), weight: n.isTopLevel ? (bold ? .bold : .medium) : .regular)
-        label.textColor = n.isTopLevel && n.location == nil ? .secondaryLabelColor : .labelColor
+        label.font = .systemFont(ofSize: 13 + CGFloat(p.fontSizeDelta), weight: bold && n.isTopLevel ? .semibold : .regular)
+        // Groups without a folder of their own (Tags, Star Ratings, …) read dimmer, as in the original.
+        label.textColor = n.location == nil && n.isTopLevel && n.isFavoritesSection == false ? .secondaryLabelColor : .labelColor
         var tint = n.labelColor ?? (p.foldersInheritColor ? n.color : nil) ?? n.color ?? ThemeColors.theme
         if case .folder = n.kind, !n.isTopLevel, n.symbol == nil, !p.foldersInheritColor { tint = n.labelColor ?? ThemeColors.theme }
         var img: NSImage?
@@ -464,9 +473,12 @@ final class TreeCell: NSTableCellView {
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet {
             let sel = backgroundStyle == .emphasized
-            label.textColor = sel ? .white : (node.map { $0.isTopLevel && $0.location == nil ? NSColor.secondaryLabelColor : NSColor.labelColor } ?? .labelColor)
-            if icon.contentTintColor != nil || sel { icon.contentTintColor = sel ? .white : selectedTint }
-            eject.contentTintColor = sel ? .white : nil
+            label.textColor = sel ? .white : (node.map { $0.location == nil && $0.isTopLevel && !$0.isFavoritesSection ? NSColor.secondaryLabelColor : NSColor.labelColor } ?? .labelColor)
+            // Original keeps the coloured symbol on the pill, lightened toward white.
+            if icon.contentTintColor != nil || sel {
+                icon.contentTintColor = sel ? (selectedTint ?? .white).blended(withFraction: 0.55, of: .white) : selectedTint
+            }
+            eject.contentTintColor = sel ? .white : .secondaryLabelColor
         }
     }
 
@@ -522,14 +534,32 @@ final class IndentGuidesView: NSView {
 final class AccentRowView: NSTableRowView {
     override func drawSelection(in dirtyRect: NSRect) {
         guard selectionHighlightStyle != .none else { return }
-        let r = bounds.insetBy(dx: 10, dy: 1)
-        let path = NSBezierPath(roundedRect: r, xRadius: 7, yRadius: 7)
-        let base = ThemeColors.theme
-        (isEmphasized ? base : base.withAlphaComponent(0.55)).setFill()
+        // Folders Pro: full-width inset pill, accent fill, faint light rim; height follows the label row.
+        // Row views start at x=0 in the outline; inset so the rounded corners are fully visible like the original.
+        let r = NSRect(x: bounds.minX + 14, y: bounds.maxY - 25, width: bounds.width - 26, height: 23).integral
+        let path = NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6)
+        // Resolve the accent in the row's appearance (dynamic asset colour), then blend like the original (~80%).
+        var base = ThemeColors.theme
+        effectiveAppearance.performAsCurrentDrawingAppearance { base = ThemeColors.theme.usingColorSpace(.sRGB) ?? base }
+        // Same strength whether or not the window is key (the original doesn't fade it).
+        base.withAlphaComponent(0.8).setFill()
         path.fill()
-        base.blended(withFraction: 0.35, of: .white)?.withAlphaComponent(0.6).setStroke()
+        NSColor.white.withAlphaComponent(0.2).setStroke()
         path.lineWidth = 1
         path.stroke()
     }
     override var interiorBackgroundStyle: NSView.BackgroundStyle { isSelected ? .emphasized : .normal }
+    override var isEmphasized: Bool { get { true } set { } }
+}
+
+
+/// Faint theme-colour wash over the sidebar glass (the original tints its window background with its accent).
+final class TintedSidebarView: NSView {
+    override init(frame: NSRect) { super.init(frame: frame); wantsLayer = true; updateTint() }
+    required init?(coder: NSCoder) { fatalError() }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); updateTint() }
+    func updateTint() {
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        layer?.backgroundColor = ThemeColors.theme.withAlphaComponent(dark ? 0.035 : 0.03).cgColor
+    }
 }

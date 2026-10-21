@@ -54,15 +54,15 @@ public struct SidebarSection: Codable, Hashable, Identifiable, Sendable {
         .init(id: "hd", label: "Hard drives", colorIndex: 0, icon: "internaldrive", disabled: false, expandedByDefault: false),
         .init(id: "ed", label: "External drives", colorIndex: 0, icon: "externaldrive", disabled: false, expandedByDefault: true),
         .init(id: "nd", label: "Network shares", colorIndex: 0, icon: "externaldrive.connected.to.line.below", disabled: false, expandedByDefault: true),
-        .init(id: "remote", label: "Remote connections", colorIndex: 0, icon: "network", disabled: true, expandedByDefault: false),
+        .init(id: "remote", label: "Remote connections", colorIndex: 0, icon: "network", disabled: false, expandedByDefault: false),
         .init(id: "icloud", label: "iCloud Drive folder", colorIndex: 0, icon: "icloud", disabled: false, expandedByDefault: false),
         .init(id: "cs", label: "Cloud storage", colorIndex: 0, icon: "globe.americas", disabled: false, expandedByDefault: false),
         .init(id: "idevice", label: "iOS Devices", colorIndex: 0, icon: "iphone", disabled: false, expandedByDefault: true),
         .init(id: "recent", label: "Recent files", colorIndex: 0, icon: "clock", disabled: false, expandedByDefault: false),
         .init(id: "tags", label: "Tags", colorIndex: 0, icon: "circlebadge.2", disabled: false, expandedByDefault: false),
-        .init(id: "ratings", label: "Star ratings", colorIndex: 0, icon: "star.circle", disabled: true, expandedByDefault: false),
-        .init(id: "searches", label: "Saved searches", colorIndex: 0, icon: "magnifyingglass", disabled: true, expandedByDefault: false),
-        .init(id: "trash", label: "Trash", colorIndex: 0, icon: "trash", disabled: true, expandedByDefault: false),
+        .init(id: "ratings", label: "Star ratings", colorIndex: 0, icon: "star.circle", disabled: false, expandedByDefault: false),
+        .init(id: "searches", label: "Saved searches", colorIndex: 0, icon: "magnifyingglass", disabled: false, expandedByDefault: false),
+        .init(id: "trash", label: "Trash", colorIndex: 0, icon: "trash", disabled: false, expandedByDefault: false),
     ]
 }
 

@@ -132,7 +132,7 @@ public enum FileItemLoader {
             isSymlink: v.isSymbolicLink ?? false, isAlias: (v.isAliasFile ?? false) && !(v.isSymbolicLink ?? false),
             isHidden: (v.isHidden ?? false) || name.hasPrefix("."), isLocked: v.isUserImmutable ?? false,
             isVolume: v.isVolume ?? false,
-            size: isDir && !(v.isPackage ?? false) ? nil : Int64(v.totalFileSize ?? v.fileSize ?? 0),
+            size: isDir && !(v.isPackage ?? false) ? nil : (v.isPackage == true ? FileItemLoader.packageSize(url) : Int64(v.totalFileSize ?? v.fileSize ?? 0)),
             created: v.creationDate, modified: v.contentModificationDate, added: v.addedToDirectoryDate,
             opened: v.contentAccessDate, attributeChanged: v.attributeModificationDate,
             typeIdentifier: v.typeIdentifier, kind: v.localizedTypeDescription ?? "",
@@ -165,6 +165,26 @@ public enum FileItemLoader {
         }
         return urls.compactMap { load($0, preferPathNames: preferPathNames) }
             .filter { includeHidden || !$0.isHidden }
+    }
+
+    /// Recursive logical size of a package (apps, bundles), cached per path + modification date.
+    nonisolated(unsafe) static var packageSizes: [String: (Date?, Int64)] = [:]
+    static let packageLock = NSLock()
+    public static func packageSize(_ url: URL) -> Int64 {
+        let mod = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        packageLock.lock()
+        if let c = packageSizes[url.path], c.0 == mod { packageLock.unlock(); return c.1 }
+        packageLock.unlock()
+        var total: Int64 = 0
+        if let e = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.totalFileSizeKey, .isRegularFileKey], options: [], errorHandler: { _, _ in true }) {
+            for case let f as URL in e {
+                if let v = try? f.resourceValues(forKeys: [.totalFileSizeKey, .isRegularFileKey]), v.isRegularFile == true {
+                    total += Int64(v.totalFileSize ?? 0)
+                }
+            }
+        }
+        packageLock.lock(); packageSizes[url.path] = (mod, total); packageLock.unlock()
+        return total
     }
 
     public static func childCount(_ dir: URL, includeHidden: Bool) -> Int? {

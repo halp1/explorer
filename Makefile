@@ -41,6 +41,8 @@ app: build icon
 	printf 'APPL????' > $(APP)/Contents/PkgInfo
 	cp Support/com.halp.explorer.Helper.plist $(APP)/Contents/Library/LaunchDaemons/
 	cp Resources/explorer Resources/Explorer.sdef build/AppIcon.icns $(APP)/Contents/Resources/
+	@mkdir -p build/assets
+	xcrun actool Resources/Assets.xcassets --compile $(APP)/Contents/Resources --platform macosx --minimum-deployment-target 13.0 --accent-color AccentColor --output-partial-info-plist build/assets/partial.plist >/dev/null
 	cp -R Resources/en.lproj $(APP)/Contents/Resources/ 2>/dev/null || true
 	chmod +x $(APP)/Contents/Resources/explorer
 	@# Copy any SwiftPM resource bundles

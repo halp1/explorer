@@ -265,6 +265,11 @@ final class PathSuggestions {
 
 final class StatusBarView: NSView {
     weak var host: BrowserWindowController?
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        layer?.backgroundColor = ThemeColors.theme.withAlphaComponent(dark ? 0.09 : 0.05).cgColor
+    }
     /// The per-view toggle buttons live on the left of the bottom bar, like the original.
     weak var toggles: ActionToolbarView? {
         didSet {
@@ -289,6 +294,8 @@ final class StatusBarView: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        wantsLayer = true
+        viewDidChangeEffectiveAppearance()
         for l in [label, right, opLabel] { l.font = .systemFont(ofSize: 12); l.textColor = .secondaryLabelColor; l.lineBreakMode = .byTruncatingMiddle }
         right.textColor = .labelColor
         right.font = .systemFont(ofSize: 12, weight: .medium)
@@ -331,7 +338,7 @@ final class StatusBarView: NSView {
             let size = st.selection.compactMap(\.size).reduce(0, +)
             text = String(format: "%lld of %lld selected", Int64(selCount), Int64(n)) + (size > 0 ? ", " + SizeFormat.string(size) : "")
         } else {
-            let size = st.items.filter { !$0.isFolder }.compactMap(\.size).reduce(0, +)
+            let size = st.items.filter { !$0.isFolder || $0.isPackage }.compactMap(\.size).reduce(0, +)
             text = String(format: n == 1 ? "%lld item" : "%lld items", Int64(n)) + (size > 0 ? ", " + SizeFormat.string(size) : "") + (st.loading ? " — Loading..." : "")
         }
         label.stringValue = text

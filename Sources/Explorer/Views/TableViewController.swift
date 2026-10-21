@@ -70,7 +70,8 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
             let s = settings[id.rawValue] ?? defaults[id.rawValue] ?? ColumnSetting(order: 99, isHidden: true, width: 100)
             let c = NSTableColumn(identifier: .init(id.rawValue))
             c.title = id.title
-            c.headerCell.attributedStringValue = NSAttributedString(string: id.title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
+            let lead = id == .fileName ? "   " : ""
+            c.headerCell.attributedStringValue = NSAttributedString(string: lead + id.title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
             c.width = s.width
             c.minWidth = id == .fileName ? 120 : (id == .git ? 24 : 40)
             c.isHidden = id == .fileName ? false : s.isHidden
@@ -144,7 +145,7 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
         guard isViewLoaded else { return }
         let p = Preferences.shared
         table.rowHeight = CGFloat(p.rowHeight) + 1 + CGFloat(p.fontSizeDelta)
-        table.usesAlternatingRowBackgroundColors = p.alternatingRows
+        table.usesAlternatingRowBackgroundColors = false   // FileRowView draws stripes per group
         if state.options.grouping == .none {
             rows = state.items.map { .item($0) }
         } else {
@@ -186,12 +187,30 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { item(at: row) != nil }
 
+    /// Group headers are taller with breathing room above (Folders Pro: ~30 pt header after a ~20 pt gap).
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        if case .group = rows[row] { return row == 0 ? 28 : 50 }
+        return tableView.rowHeight
+    }
+
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let v = FileRowView()
+        if case .group = rows[row] { v.isGroupHeader = true; return v }
+        // Stripe index restarts after every group header, like the original.
+        var i = 0, r = row - 1
+        while r >= 0, case .item = rows[r] { i += 1; r -= 1 }
+        v.stripe = Preferences.shared.alternatingRows && i % 2 == 1
+        return v
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         switch rows[row] {
         case .group(let g):
-            let a = NSMutableAttributedString(string: g.title, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor])
-            a.append(NSAttributedString(string: "   \(g.items.count)", attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.tertiaryLabelColor]))
-            let v = NSTextField(labelWithAttributedString: a)
+            // Full-width group rows span all columns via isGroupRow; guard against per-column calls.
+            if let col = tableColumn, col !== tableView.tableColumns.first(where: { !$0.isHidden }) { return nil }
+            let a = NSMutableAttributedString(string: g.title, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.tertiaryLabelColor])
+            a.append(NSAttributedString(string: "   \(g.items.count)", attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.quaternaryLabelColor]))
+            let v = GroupHeaderCell(text: a)
             return v
         case .item(let it):
             guard let col = tableColumn, let id = TableColumnID(rawValue: col.identifier.rawValue) else { return nil }
@@ -216,7 +235,7 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
             s.append(ItemStyle.badges(it))
             cell.text.attributedStringValue = s
             cell.text.lineBreakMode = ItemStyle.truncation(Preferences.shared.truncateFiles)
-            cell.setIcon(for: it, state: state, size: max(16, table.rowHeight - 4))
+            cell.setIcon(for: it, state: state, size: 16)
             cell.text.delegate = self
             return cell
         case .dateModified: text = dd.string(it.modified)
@@ -398,11 +417,11 @@ final class FileCellView: NSTableCellView {
             addSubview(iconView)
             imageView = iconView
             NSLayoutConstraint.activate([
-                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
                 iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-                iconView.heightAnchor.constraint(equalTo: heightAnchor, constant: -4),
-                iconView.widthAnchor.constraint(equalTo: iconView.heightAnchor),
-                text.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 5),
+                iconView.heightAnchor.constraint(equalToConstant: 17),
+                iconView.widthAnchor.constraint(equalToConstant: 17),
+                text.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 7),
             ])
         } else {
             text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2).isActive = true
@@ -418,7 +437,8 @@ final class FileCellView: NSTableCellView {
         representedID = it.id
         iconView.image = ThumbnailStore.icon(for: it, size: size)
         iconView.alphaValue = it.isHidden ? 0.5 : 1
-        guard state.options.showThumbnails, !it.isFolder || Preferences.shared.folderThumbnails != .systemIcon, it.archivePath == nil else { return }
+        // At list/table row sizes the original keeps plain document icons; thumbnails start at ≥32 pt.
+        guard size >= 32, state.options.showThumbnails, !it.isFolder || Preferences.shared.folderThumbnails != .systemIcon, it.archivePath == nil else { return }
         if let c = ThumbnailStore.shared.cached(it, size: size) { iconView.image = c; return }
         let id = it.id
         ThumbnailStore.shared.thumbnail(for: it, size: size, scale: window?.backingScaleFactor ?? 2, folderStyle: Preferences.shared.folderThumbnails) { [weak self] img in
@@ -426,4 +446,36 @@ final class FileCellView: NSTableCellView {
             self?.iconView.image = img
         }
     }
+}
+
+
+/// Row background: subtle stripes restarting per group; group headers get a hairline under them.
+final class FileRowView: NSTableRowView {
+    var stripe = false
+    var isGroupHeader = false
+    override func drawBackground(in dirtyRect: NSRect) {
+        if stripe && !isGroupHeader {
+            NSColor.labelColor.withAlphaComponent(0.035).setFill()
+            bounds.fill()
+        }
+        if isGroupHeader {
+            NSColor.separatorColor.setFill()
+            NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
+        }
+    }
+}
+
+/// Group title pinned to the bottom of its (tall) row.
+final class GroupHeaderCell: NSView {
+    init(text: NSAttributedString) {
+        super.init(frame: .zero)
+        let l = NSTextField(labelWithAttributedString: text)
+        l.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(l)
+        NSLayoutConstraint.activate([
+            l.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22),
+            l.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
 }
