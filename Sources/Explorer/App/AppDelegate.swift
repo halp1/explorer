@@ -48,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DebugSnapshot.scheduleIfRequested()
     }
 
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { openWindow(.directory(prefs.defaultURL)) }
         return true

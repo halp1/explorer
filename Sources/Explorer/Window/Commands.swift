@@ -557,9 +557,25 @@ extension BrowserWindowController {
 
     // MARK: Find
 
-    @objc func performFind(_ sender: Any?) {
-        guard let tb = window?.toolbar, let item = tb.items.first(where: { $0 is NSSearchToolbarItem }) as? NSSearchToolbarItem else { return }
-        item.beginSearchInteraction()
+    @objc func performFind(_ sender: Any?) { showSearchField(sender) }
+
+    /// Replaces the round search button with the search field and focuses it; it collapses back when emptied.
+    @objc func showSearchField(_ sender: Any?) {
+        guard let tb = window?.toolbar else { return }
+        if let idx = tb.items.firstIndex(where: { $0.itemIdentifier.rawValue == "searchButton" }) {
+            tb.removeItem(at: idx)
+            tb.insertItem(withItemIdentifier: NSToolbarItem.Identifier("search"), at: idx)
+        }
+        DispatchQueue.main.async { [weak self] in
+            (self?.window?.toolbar?.items.first { $0 is NSSearchToolbarItem } as? NSSearchToolbarItem)?.beginSearchInteraction()
+        }
+    }
+
+    func collapseSearchFieldIfEmpty() {
+        guard let tb = window?.toolbar, let idx = tb.items.firstIndex(where: { $0 is NSSearchToolbarItem }),
+              let f = (tb.items[idx] as? NSSearchToolbarItem)?.searchField, f.stringValue.isEmpty, !state.isSearch else { return }
+        tb.removeItem(at: idx)
+        tb.insertItem(withItemIdentifier: NSToolbarItem.Identifier("searchButton"), at: idx)
     }
 
     // MARK: Source Control

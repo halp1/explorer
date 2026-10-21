@@ -31,6 +31,16 @@ enum Menus {
         return m
     }
 
+    static func viewKindMenu(target: AnyObject?) -> NSMenu {
+        let m = NSMenu(title: "View")
+        for (n, k) in ViewKind.allCases.enumerated() {
+            let i = item("as \(k.title)", #selector(BrowserWindowController.setViewKind(_:)), String(n + 1), target: target, represented: k.rawValue)
+            i.image = NSImage(systemSymbolName: ViewKind.toolbarSymbol(k), accessibilityDescription: nil)
+            m.addItem(i)
+        }
+        return m
+    }
+
     static func groupMenu(target: AnyObject?) -> NSMenu {
         let m = NSMenu(title: "Grouping")
         for k in GroupKey.allCases {
@@ -202,6 +212,12 @@ final class TagDotsView: NSView {
 }
 
 // MARK: - Context menus
+
+extension ViewKind {
+    static func toolbarSymbol(_ k: ViewKind) -> String {
+        switch k { case .icons: return "square.grid.2x2"; case .list: return "list.bullet"; case .table: return "tablecells"; case .gallery: return "rectangle.on.rectangle" }
+    }
+}
 
 extension BrowserWindowController {
     /// Builds the file-view context menu according to the user's layout (Settings › Context Menu).

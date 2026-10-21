@@ -30,6 +30,10 @@ let package = Package(
                 .linkedFramework("AppKit"), .linkedFramework("Quartz"), .linkedFramework("QuickLookThumbnailing"),
                 .linkedFramework("AVKit"), .linkedFramework("VisionKit"), .linkedFramework("ServiceManagement"),
                 .linkedFramework("AppIntents"),
+                // SwiftPM records the deployment target as the SDK version, which makes macOS run the app
+                // in legacy-appearance compatibility mode. Record the real SDK so the window gets the
+                // current system design (glass toolbar, floating sidebar) like apps built with Xcode.
+                .unsafeFlags(["-Xlinker", "-platform_version", "-Xlinker", "macos", "-Xlinker", "13.0", "-Xlinker", "27.0"]),
             ]
         ),
         .executableTarget(

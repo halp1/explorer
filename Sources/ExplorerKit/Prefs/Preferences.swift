@@ -49,7 +49,7 @@ public struct SidebarSection: Codable, Hashable, Identifiable, Sendable {
     public var expandedByDefault: Bool?
 
     public static let defaults: [SidebarSection] = [
-        .init(id: "favorites", label: "Favorites", colorIndex: 7, icon: "star", disabled: false, expandedByDefault: true),
+        .init(id: "favorites", label: "Favorites", colorIndex: 7, icon: "star", disabled: false, expandedByDefault: false),
         .init(id: "home", label: "Home", colorIndex: 0, icon: "house", disabled: false, expandedByDefault: true),
         .init(id: "hd", label: "Hard drives", colorIndex: 0, icon: "internaldrive", disabled: false, expandedByDefault: false),
         .init(id: "ed", label: "External drives", colorIndex: 0, icon: "externaldrive", disabled: false, expandedByDefault: true),
@@ -94,8 +94,8 @@ public enum TableColumnID: String, Codable, CaseIterable, Sendable {
         }
     }
     public static let tableDefaults: [String: ColumnSetting] = [
-        "fileName": .init(order: 0, isHidden: false, width: 260), "dateModified": .init(order: 1, isHidden: false, width: 150),
-        "size": .init(order: 2, isHidden: false, width: 80), "fileType": .init(order: 3, isHidden: false, width: 130),
+        "fileName": .init(order: 0, isHidden: false, width: 205), "dateModified": .init(order: 1, isHidden: false, width: 155),
+        "size": .init(order: 2, isHidden: false, width: 95), "fileType": .init(order: 3, isHidden: false, width: 130),
         "dateCreated": .init(order: 4, isHidden: true, width: 150), "dateAdded": .init(order: 5, isHidden: true, width: 150),
         "dateOpened": .init(order: 6, isHidden: true, width: 150), "tags": .init(order: 7, isHidden: true, width: 100),
         "rating": .init(order: 8, isHidden: true, width: 80), "git": .init(order: 9, isHidden: true, width: 40),
@@ -143,7 +143,7 @@ public final class Preferences: ObservableObject {
     public var fontSizeDelta: Int { get { get("fontSizeDelta", 0) } set { set("fontSizeDelta", newValue) } }
     public var sounds: SoundsMode { get { getEnum("sounds", .inApp) } set { setEnum("sounds", newValue) } }
     public var pathBarStyle: PathBarStyle { get { getEnum("pathBarStyle", .interactive) } set { setEnum("pathBarStyle", newValue) } }
-    public var pathBarPosition: PathBarPosition { get { getEnum("pathBarPosition", .bottom) } set { setEnum("pathBarPosition", newValue) } }
+    public var pathBarPosition: PathBarPosition { get { getEnum("pathBarPosition", .top) } set { setEnum("pathBarPosition", newValue) } }
     public var showShelf: Bool { get { get("showShelf", true) } set { set("showShelf", newValue) } }
     public var returnAction: ReturnAction { get { getEnum("returnAction", .open) } set { setEnum("returnAction", newValue) } }
     public var backWithDelete: Bool { get { get("backWithDelete", false) } set { set("backWithDelete", newValue) } }

@@ -20,9 +20,10 @@ final class ShelfController: NSViewController, NSTableViewDataSource, NSTableVie
         flap.bezelStyle = .regularSquare
         flap.isBordered = false
         flap.wantsLayer = true
-        flap.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.25).cgColor
-        flap.layer?.cornerRadius = 4
-        flap.image = NSImage(systemSymbolName: "tray.full", accessibilityDescription: "Shelf")
+        flap.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.35).cgColor
+        flap.layer?.cornerRadius = 7
+        flap.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+        flap.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Shelf")?.withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
         flap.toolTip = "The Shelf is the temporary collection of items from different locations to be used together later. Adding an item to the Shelf does not move it."
         flap.target = self
         flap.action = #selector(toggle)
@@ -73,11 +74,11 @@ final class ShelfController: NSViewController, NSTableViewDataSource, NSTableVie
         ])
 
         [panel, flap, flapDrop].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; root.addSubview($0) }
-        widthConstraint = root.widthAnchor.constraint(equalToConstant: 14)
+        widthConstraint = root.widthAnchor.constraint(equalToConstant: 16)
         NSLayoutConstraint.activate([
             widthConstraint,
             flap.leadingAnchor.constraint(equalTo: root.leadingAnchor), flap.centerYAnchor.constraint(equalTo: root.centerYAnchor),
-            flap.widthAnchor.constraint(equalToConstant: 14), flap.heightAnchor.constraint(equalToConstant: 60),
+            flap.widthAnchor.constraint(equalToConstant: 16), flap.heightAnchor.constraint(equalToConstant: 96),
             flapDrop.leadingAnchor.constraint(equalTo: root.leadingAnchor), flapDrop.topAnchor.constraint(equalTo: root.topAnchor),
             flapDrop.bottomAnchor.constraint(equalTo: root.bottomAnchor), flapDrop.widthAnchor.constraint(equalToConstant: 14),
             panel.leadingAnchor.constraint(equalTo: flap.trailingAnchor), panel.topAnchor.constraint(equalTo: root.topAnchor),
@@ -96,6 +97,7 @@ final class ShelfController: NSViewController, NSTableViewDataSource, NSTableVie
         table.reloadData()
         panel.subviews.first { $0.identifier?.rawValue == "empty" }?.isHidden = !entries.isEmpty
         flap.contentTintColor = entries.isEmpty ? .secondaryLabelColor : .controlAccentColor
+        flap.image = NSImage(systemSymbolName: isOpen ? "chevron.right" : "chevron.left", accessibilityDescription: "Shelf")?.withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
     }
 
     @objc func toggle() { isOpen ? close() : open() }
@@ -108,7 +110,7 @@ final class ShelfController: NSViewController, NSTableViewDataSource, NSTableVie
 
     func close() {
         isOpen = false
-        NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; widthConstraint.animator().constant = 14 }, completionHandler: { [weak self] in
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; widthConstraint.animator().constant = 16 }, completionHandler: { [weak self] in
             if self?.isOpen == false { self?.panel.isHidden = true }
         })
     }

@@ -39,7 +39,9 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         outline.action = #selector(clicked)
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
+        scroll.automaticallyAdjustsContentInsets = true
+        scroll.autohidesScrollers = false
+        scroll.scrollerStyle = .legacy
         scroll.drawsBackground = false
         view = scroll
 
@@ -76,11 +78,12 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         roots = TreeBuilder.sections(network: network)
         let prefs = Preferences.shared
         if initial && expanded.isEmpty {
-            for s in prefs.sidebarSections where s.expandedByDefault ?? true { expanded.insert("s:" + s.id) }
+            let defaults = Set(prefs.sidebarSections.filter { $0.expandedByDefault ?? true }.map(\.id))
+            for r in roots where defaults.contains(r.sectionID ?? "") { expanded.insert(r.identity) }
         }
         let p = Preferences.shared
         outline.rowSizeStyle = .custom
-        outline.rowHeight = 20 + CGFloat(p.treeSpacing) + CGFloat(p.fontSizeDelta)
+        outline.rowHeight = 21 + CGFloat(p.treeSpacing) + CGFloat(p.fontSizeDelta)
         outline.indentGuides = p.showIndentGuides
         scroll.hasHorizontalScroller = p.truncateFolders == .none
         outline.columnAutoresizingStyle = p.truncateFolders == .none ? .noColumnAutoresizing : .uniformColumnAutoresizingStyle
@@ -113,7 +116,7 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
             suppressSelection = true
             outline.selectRowIndexes([row], byExtendingSelection: false)
             suppressSelection = false
-            if Preferences.shared.autoScrollTree { outline.scrollRowToVisible(row) }
+            if Preferences.shared.autoScrollTree { scrollRowIntoComfortableView(row) }
         }
     }
 
@@ -127,9 +130,10 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
             // Best root: the deepest folder node that is an ancestor of path (prefer Favorites/Home order of sections)
             var best: TreeNode?
             var bestLen = -1
+            // Candidate roots: top-level folder nodes (e.g. Home) and folder children of sections (Favorites, drives).
             for section in roots {
-                for c in section.children ?? [] {
-                    guard let cu = c.url else { continue }
+                for c in [section] + (section.children ?? []) {
+                    guard let cu = c.url, c.location != nil else { continue }
                     let cp = cu.standardizedFileURL.resolvingSymlinksInPath().path
                     if path == cp || path.hasPrefix(cp == "/" ? "/" : cp + "/"), cp.count > bestLen {
                         best = c; bestLen = cp.count
@@ -138,8 +142,10 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
             }
             guard var node = best else { return nil }
             let autoExpand = Preferences.shared.autoExpandTree
-            if !outline.isItemExpanded(node.parent) && !autoExpand { return nil }
-            if let p = node.parent, !outline.isItemExpanded(p) { outline.expandItem(p); expanded.insert(p.identity) }
+            if let p = node.parent, !outline.isItemExpanded(p) {
+                if !autoExpand { return nil }
+                outline.expandItem(p); expanded.insert(p.identity)
+            }
             while true {
                 let np = node.url!.standardizedFileURL.resolvingSymlinksInPath().path
                 if np == path { return node }
@@ -189,6 +195,16 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
 
     func outlineView(_ ov: NSOutlineView, shouldSelectItem item: Any) -> Bool { (item as! TreeNode).isNodeSelectable }
 
+    func outlineView(_ ov: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? { AccentRowView() }
+
+    func outlineView(_ ov: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+        let n = item as! TreeNode
+        let base = ov.rowHeight
+        // Extra breathing room above each top-level group after the first (as in the original sidebar).
+        if n.isTopLevel, let i = roots.firstIndex(of: n), i > 1 { return base + 10 }
+        return base
+    }
+
     func outlineView(_ ov: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         let n = item as! TreeNode
         let cell = (ov.makeView(withIdentifier: TreeCell.id, owner: self) as? TreeCell) ?? TreeCell()
@@ -228,6 +244,19 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         default:
             if let loc = n.location { host?.state.go(loc) }
         }
+    }
+
+    /// Scrolls only when the row is outside the visible (inset-aware) area, then centres it.
+    private func scrollRowIntoComfortableView(_ row: Int) {
+        let r = outline.rect(ofRow: row)
+        let clip = scroll.contentView
+        let insets = scroll.contentInsets
+        let visible = NSRect(x: clip.bounds.minX, y: clip.bounds.minY + insets.top,
+                             width: clip.bounds.width, height: clip.bounds.height - insets.top - insets.bottom)
+        guard !visible.contains(r) else { return }
+        let targetY = max(-insets.top, min(r.midY - insets.top - visible.height / 2, outline.bounds.height - clip.bounds.height + insets.bottom))
+        clip.scroll(to: NSPoint(x: 0, y: targetY))
+        scroll.reflectScrolledClipView(clip)
     }
 
     // MARK: Keyboard: ⌥↑/⌥↓ jump between top-level nodes, ⌥1-4 toggle sections
@@ -338,7 +367,7 @@ extension Notification.Name {
 
 final class TreeOutlineView: NSOutlineView {
     weak var owner: TreeViewController?
-    var indentGuides = false { didSet { needsDisplay = true } }
+    var indentGuides = false { didSet { needsLayout = true } }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         owner?.menu(forRow: row(at: convert(event.locationInWindow, from: nil)))
@@ -358,23 +387,16 @@ final class TreeOutlineView: NSOutlineView {
         super.keyDown(with: event)
     }
 
-    override func drawBackground(inClipRect clipRect: NSRect) {
-        super.drawBackground(inClipRect: clipRect)
-        guard indentGuides else { return }
-        NSColor.separatorColor.setStroke()
-        let rows = self.rows(in: clipRect)
-        for r in rows.lowerBound..<rows.upperBound {
-            let lvl = level(forRow: r)
-            guard lvl > 1 else { continue }
-            let rect = rect(ofRow: r)
-            for l in 1..<lvl {
-                let x = CGFloat(l) * indentationPerLevel + 14
-                let p = NSBezierPath()
-                p.move(to: NSPoint(x: x, y: rect.minY)); p.line(to: NSPoint(x: x, y: rect.maxY))
-                p.lineWidth = 0.5
-                p.stroke()
-            }
-        }
+    // Indent guides are drawn by an overlay so the outline keeps the system sidebar material
+    // (overriding drawBackground makes AppKit treat the table as opaque).
+    private lazy var guides: IndentGuidesView = {
+        let v = IndentGuidesView(); v.outline = self; addSubview(v, positioned: .below, relativeTo: nil); return v
+    }()
+
+    override func layout() {
+        super.layout()
+        if indentGuides { guides.frame = bounds; guides.needsDisplay = true }
+        guides.isHidden = !indentGuides
     }
 }
 
@@ -398,13 +420,13 @@ final class TreeCell: NSTableCellView {
         textField = label
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 17), icon.heightAnchor.constraint(equalToConstant: 17),
+            icon.centerYAnchor.constraint(equalTo: label.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 19), icon.heightAnchor.constraint(equalToConstant: 17),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
             label.trailingAnchor.constraint(equalTo: eject.leadingAnchor, constant: -4),
             eject.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            eject.centerYAnchor.constraint(equalTo: centerYAnchor),
+            eject.centerYAnchor.constraint(equalTo: label.centerYAnchor),
             eject.widthAnchor.constraint(equalToConstant: 14),
         ])
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -417,9 +439,9 @@ final class TreeCell: NSTableCellView {
         label.stringValue = n.title
         label.lineBreakMode = ItemStyle.truncation(p.truncateFolders)
         let bold = n.isTopLevel && p.boldTopLevel
-        label.font = n.isTopLevel ? .systemFont(ofSize: 11 + CGFloat(p.fontSizeDelta), weight: bold ? .bold : .semibold)
-                                  : .systemFont(ofSize: 13 + CGFloat(p.fontSizeDelta))
-        label.textColor = n.isTopLevel ? .secondaryLabelColor : .labelColor
+        // Top-level rows read like the original: same size as children, slightly bolder, secondary colour.
+        label.font = .systemFont(ofSize: 13 + CGFloat(p.fontSizeDelta), weight: n.isTopLevel ? (bold ? .bold : .medium) : .regular)
+        label.textColor = n.isTopLevel && n.location == nil ? .secondaryLabelColor : .labelColor
         var tint = n.labelColor ?? (p.foldersInheritColor ? n.color : nil) ?? n.color ?? ThemeColors.theme
         if case .folder = n.kind, !n.isTopLevel, n.symbol == nil, !p.foldersInheritColor { tint = n.labelColor ?? ThemeColors.theme }
         var img: NSImage?
@@ -428,13 +450,24 @@ final class TreeCell: NSTableCellView {
             icon.contentTintColor = nil
         } else {
             let sym = n.symbol ?? (n.isFavorite ? "folder" : "folder")
-            img = NSImage(systemSymbolName: sym, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+            img = NSImage(systemSymbolName: sym, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
             icon.contentTintColor = tint
         }
         if case .placeholder = n.kind { label.textColor = .tertiaryLabelColor }
+        selectedTint = tint
         if case .share = n.kind { label.textColor = .secondaryLabelColor }
         icon.image = img
         eject.isHidden = !n.ejectable
+    }
+
+    private var selectedTint: NSColor?
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet {
+            let sel = backgroundStyle == .emphasized
+            label.textColor = sel ? .white : (node.map { $0.isTopLevel && $0.location == nil ? NSColor.secondaryLabelColor : NSColor.labelColor } ?? .labelColor)
+            if icon.contentTintColor != nil || sel { icon.contentTintColor = sel ? .white : selectedTint }
+            eject.contentTintColor = sel ? .white : nil
+        }
     }
 
     @objc private func ejectTapped() {
@@ -460,4 +493,43 @@ enum VolumeOps {
             }
         }
     }
+}
+
+final class IndentGuidesView: NSView {
+    weak var outline: TreeOutlineView?
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let o = outline else { return }
+        NSColor.separatorColor.setStroke()
+        let rows = o.rows(in: dirtyRect)
+        for r in rows.lowerBound..<rows.upperBound {
+            let lvl = o.level(forRow: r)
+            guard lvl > 1 else { continue }
+            let rect = o.rect(ofRow: r)
+            for l in 1..<lvl {
+                let x = CGFloat(l) * o.indentationPerLevel + 14
+                let p = NSBezierPath()
+                p.move(to: NSPoint(x: x, y: rect.minY)); p.line(to: NSPoint(x: x, y: rect.maxY))
+                p.lineWidth = 0.5
+                p.stroke()
+            }
+        }
+    }
+}
+
+/// Solid accent-coloured selection pill (Folders Pro style) instead of the translucent source-list highlight.
+final class AccentRowView: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard selectionHighlightStyle != .none else { return }
+        let r = bounds.insetBy(dx: 10, dy: 1)
+        let path = NSBezierPath(roundedRect: r, xRadius: 7, yRadius: 7)
+        let base = ThemeColors.theme
+        (isEmphasized ? base : base.withAlphaComponent(0.55)).setFill()
+        path.fill()
+        base.blended(withFraction: 0.35, of: .white)?.withAlphaComponent(0.6).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { isSelected ? .emphasized : .normal }
 }

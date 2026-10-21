@@ -36,7 +36,8 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
         table.allowsColumnResizing = true
         table.columnAutoresizingStyle = .noColumnAutoresizing
         table.style = .fullWidth
-        table.intercellSpacing = NSSize(width: 6, height: 0)
+        table.intercellSpacing = NSSize(width: 12, height: 0)
+        table.gridStyleMask = []
         table.target = self
         table.doubleAction = #selector(doubleClick)
         table.registerForDraggedTypes(DropIn.types)
@@ -69,11 +70,12 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
             let s = settings[id.rawValue] ?? defaults[id.rawValue] ?? ColumnSetting(order: 99, isHidden: true, width: 100)
             let c = NSTableColumn(identifier: .init(id.rawValue))
             c.title = id.title
+            c.headerCell.attributedStringValue = NSAttributedString(string: id.title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
             c.width = s.width
             c.minWidth = id == .fileName ? 120 : (id == .git ? 24 : 40)
             c.isHidden = id == .fileName ? false : s.isHidden
             if let key = id.sortKey { c.sortDescriptorPrototype = NSSortDescriptor(key: key.rawValue, ascending: true) }
-            if [.size, .originalSize, .compressedSize, .rating].contains(id) { c.headerCell.alignment = .right }
+            if [.rating, .compressedSize].contains(id) { c.headerCell.alignment = .right }
             table.addTableColumn(c)
         }
         updateSortIndicator()
@@ -141,7 +143,7 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
     func reloadItems() {
         guard isViewLoaded else { return }
         let p = Preferences.shared
-        table.rowHeight = CGFloat(p.rowHeight) + CGFloat(p.fontSizeDelta)
+        table.rowHeight = CGFloat(p.rowHeight) + 1 + CGFloat(p.fontSizeDelta)
         table.usesAlternatingRowBackgroundColors = p.alternatingRows
         if state.options.grouping == .none {
             rows = state.items.map { .item($0) }
@@ -187,9 +189,9 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         switch rows[row] {
         case .group(let g):
-            let v = NSTextField(labelWithString: "\(g.title)  (\(g.items.count))")
-            v.font = .boldSystemFont(ofSize: 11)
-            v.textColor = .secondaryLabelColor
+            let a = NSMutableAttributedString(string: g.title, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor])
+            a.append(NSAttributedString(string: "   \(g.items.count)", attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.tertiaryLabelColor]))
+            let v = NSTextField(labelWithAttributedString: a)
             return v
         case .item(let it):
             guard let col = tableColumn, let id = TableColumnID(rawValue: col.identifier.rawValue) else { return nil }
@@ -202,13 +204,15 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
         let cell = (table.makeView(withIdentifier: ident, owner: self) as? FileCellView) ?? FileCellView(icon: column == .fileName)
         cell.identifier = ident
         let bold = Preferences.shared.boldRecentChanges && state.recentlyChanged.contains(it.id)
-        let font = ItemStyle.font(NSFont.systemFontSize, bold: bold && column == .fileName)
+        let font = ItemStyle.font(NSFont.systemFontSize, bold: false)
         let dd = ItemStyle.dateDisplay()
         var text = ""
         var align: NSTextAlignment = .left
         switch column {
         case .fileName:
-            let s = NSMutableAttributedString(string: ItemStyle.displayName(it), attributes: [.font: font, .foregroundColor: it.isHidden ? NSColor.secondaryLabelColor : NSColor.labelColor])
+            let nameColor: NSColor = it.isHidden ? .tertiaryLabelColor : .labelColor
+            let para = NSMutableParagraphStyle(); para.lineBreakMode = ItemStyle.truncation(Preferences.shared.truncateFiles)
+            let s = NSMutableAttributedString(string: ItemStyle.displayName(it), attributes: [.font: ItemStyle.font(NSFont.systemFontSize, bold: bold), .foregroundColor: nameColor, .paragraphStyle: para])
             s.append(ItemStyle.badges(it))
             cell.text.attributedStringValue = s
             cell.text.lineBreakMode = ItemStyle.truncation(Preferences.shared.truncateFiles)
@@ -228,10 +232,11 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
         case .rating: text = it.rating > 0 ? String(repeating: "★", count: it.rating) : ""; align = .right
         case .git: text = it.gitStatus.map { String($0.rawValue) } ?? ""; align = .center
         }
-        cell.text.font = font
+        cell.text.font = bold && !it.isHidden ? ItemStyle.font(NSFont.systemFontSize, bold: true) : font
         cell.text.stringValue = text
         cell.text.alignment = align
-        cell.text.textColor = .secondaryLabelColor
+        // Like the original: recently changed rows in full-strength text, older ones a step dimmer, hidden ones dimmest.
+        cell.text.textColor = it.isHidden ? .tertiaryLabelColor : .labelColor
         cell.text.lineBreakMode = .byTruncatingTail
         if column == .git, let g = it.gitStatus { cell.text.textColor = ItemStyle.gitColor(g) }
         return cell

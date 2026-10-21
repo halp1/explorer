@@ -2,21 +2,21 @@ import Foundation
 
 /// Per-tab (and optionally per-folder remembered) presentation options.
 public struct ViewOptions: Codable, Hashable, Sendable {
-    public var view: ViewKind = .list
+    public var view: ViewKind = .table
     public var sortKey: SortKey = .name
     public var sortOrder: SortOrder = .ascending
-    public var folders: FolderPlacement = .first
+    public var folders: FolderPlacement = .last
     public var grouping: GroupKey = .none
     public var showHidden: Bool = false
     public var showThumbnails: Bool = true
-    public var showInfo: Bool = true
+    public var showInfo: Bool = false
     public var showTraits: Bool = false
     public var iconSize: Int = IconSizePreset.regular.rawValue
     public var liveText: Bool = false
 
-    public init(view: ViewKind = .list, sortKey: SortKey = .name, sortOrder: SortOrder = .ascending,
-                folders: FolderPlacement = .first, grouping: GroupKey = .none, showHidden: Bool = false,
-                showThumbnails: Bool = true, showInfo: Bool = true) {
+    public init(view: ViewKind = .table, sortKey: SortKey = .name, sortOrder: SortOrder = .ascending,
+                folders: FolderPlacement = .last, grouping: GroupKey = .none, showHidden: Bool = false,
+                showThumbnails: Bool = true, showInfo: Bool = false) {
         self.view = view; self.sortKey = sortKey; self.sortOrder = sortOrder; self.folders = folders
         self.grouping = grouping; self.showHidden = showHidden; self.showThumbnails = showThumbnails; self.showInfo = showInfo
     }
@@ -24,14 +24,14 @@ public struct ViewOptions: Codable, Hashable, Sendable {
     enum CodingKeys: String, CodingKey { case view, sortKey, sortOrder, folders, grouping, showHidden, showThumbnails, showInfo, showTraits, iconSize, liveText }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        view = (try? c.decode(ViewKind.self, forKey: .view)) ?? .list
+        view = (try? c.decode(ViewKind.self, forKey: .view)) ?? .table
         sortKey = (try? c.decode(SortKey.self, forKey: .sortKey)) ?? .name
         sortOrder = (try? c.decode(SortOrder.self, forKey: .sortOrder)) ?? .ascending
-        folders = (try? c.decode(FolderPlacement.self, forKey: .folders)) ?? .first
+        folders = (try? c.decode(FolderPlacement.self, forKey: .folders)) ?? .last
         grouping = (try? c.decode(GroupKey.self, forKey: .grouping)) ?? .none
         showHidden = (try? c.decode(Bool.self, forKey: .showHidden)) ?? false
         showThumbnails = (try? c.decode(Bool.self, forKey: .showThumbnails)) ?? true
-        showInfo = (try? c.decode(Bool.self, forKey: .showInfo)) ?? true
+        showInfo = (try? c.decode(Bool.self, forKey: .showInfo)) ?? false
         showTraits = (try? c.decode(Bool.self, forKey: .showTraits)) ?? false
         iconSize = (try? c.decode(Int.self, forKey: .iconSize)) ?? 64
         liveText = (try? c.decode(Bool.self, forKey: .liveText)) ?? false

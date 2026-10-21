@@ -7,7 +7,8 @@ import ExplorerKit
 /// with folder-name completions.
 final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
     weak var host: BrowserWindowController?
-    private let control = NSPathControl()
+    private let control = NSPathControl()   // kept for its click/menu behaviour on string-mode fallback
+    private let crumbs = NSStackView()
     private let field = NSTextField()
     private let suggestions = PathSuggestions()
     private var editing = false
@@ -21,6 +22,9 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
         control.delegate = self
         control.focusRingType = .none
         control.backgroundColor = .clear
+        control.alignment = .left
+        control.setContentHuggingPriority(.required, for: .horizontal)
+        control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.isBordered = false
         field.drawsBackground = false
         field.font = .systemFont(ofSize: 12)
@@ -29,14 +33,26 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
         field.lineBreakMode = .byTruncatingHead
         field.cell?.usesSingleLineMode = true
         let sep = NSBox(); sep.boxType = .separator
-        [control, field, sep].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
+        crumbs.orientation = .horizontal
+        crumbs.spacing = 4
+        crumbs.alignment = .centerY
+        crumbs.setHuggingPriority(.required, for: .horizontal)
+        crumbs.setContentCompressionResistancePriority(.init(10), for: .horizontal)
+        [control, field, sep, crumbs].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 24),
-            control.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6), control.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            crumbs.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            crumbs.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            crumbs.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        control.isHidden = true
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 38),
+            control.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12), control.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+
             control.centerYAnchor.constraint(equalTo: centerYAnchor),
             field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8), field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             field.centerYAnchor.constraint(equalTo: centerYAnchor),
-            sep.leadingAnchor.constraint(equalTo: leadingAnchor), sep.trailingAnchor.constraint(equalTo: trailingAnchor), sep.topAnchor.constraint(equalTo: topAnchor),
+            sep.leadingAnchor.constraint(equalTo: leadingAnchor), sep.trailingAnchor.constraint(equalTo: trailingAnchor), sep.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         let click = NSClickGestureRecognizer(target: self, action: #selector(beginEditingFromClick))
         click.numberOfClicksRequired = 2
@@ -47,7 +63,8 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
     func refresh() {
         guard let st = host?.state else { return }
         let interactive = Preferences.shared.pathBarStyle == .interactive && !editing
-        control.isHidden = !interactive
+        control.isHidden = true
+        crumbs.isHidden = !interactive
         field.isHidden = interactive
         field.isEditable = editing
         let url: URL?
@@ -57,17 +74,58 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
         default: url = st.location.url ?? st.currentDirectory
         }
         if let url {
-            control.url = url
+            buildCrumbs(url)
             if !editing { field.stringValue = url.path }
         } else if case .device = st.location {} else {
             control.url = nil
             field.stringValue = st.title
         }
-        if !interactive && !editing { field.isHidden = false; control.isHidden = true }
+        if !interactive && !editing { field.isHidden = false; crumbs.isHidden = true }
+    }
+
+    /// Path items from the volume root down, with a trailing chevron item (Folders Pro shows "›" after the last component).
+    static func items(for url: URL) -> [NSPathControlItem] {
+        var urls = url.standardizedFileURL.selfAndAncestors.reversed().map { $0 }
+        // Start at the volume (e.g. "Macintosh HD") rather than "/" + "System/Volumes/Data"
+        if let vol = try? url.resourceValues(forKeys: [.volumeURLKey]).volume, vol.path != "/" {
+            urls = urls.filter { $0.path.count >= vol.path.count }
+        }
+        return urls.map { u in
+            let i = NSPathControlItem()
+            let name = u.path == "/" ? ((try? u.resourceValues(forKeys: [.volumeLocalizedNameKey]).volumeLocalizedName) ?? "Macintosh HD") : FileManager.default.displayName(atPath: u.path)
+            i.attributedTitle = NSAttributedString(string: name, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium)])
+            let icon = NSWorkspace.shared.icon(forFile: u.path); icon.size = NSSize(width: 16, height: 16)
+            i.image = icon
+            pathURLs[ObjectIdentifier(i)] = u
+            return i
+        }
+    }
+    static var pathURLs: [ObjectIdentifier: URL] = [:]
+
+    private func buildCrumbs(_ url: URL) {
+        crumbs.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let items = PathBarView.items(for: url)
+        for (idx, it) in items.enumerated() {
+            let b = CrumbButton(title: it.attributedTitle.string, image: it.image, target: self, action: #selector(crumbClicked(_:)))
+            b.url = PathBarView.pathURLs[ObjectIdentifier(it)]
+            b.isLast = idx == items.count - 1
+            crumbs.addArrangedSubview(b)
+            let chev = NSImageView(image: NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)!.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))!)
+            chev.contentTintColor = .secondaryLabelColor
+            crumbs.addArrangedSubview(chev)
+            crumbs.setCustomSpacing(10, after: chev)
+            crumbs.setCustomSpacing(8, after: b)
+        }
+    }
+
+    @objc private func crumbClicked(_ b: CrumbButton) {
+        guard let u = b.url else { return }
+        if NSEvent.modifierFlags.contains(.command) { AppDelegate.shared.openTab(.directory(u), from: host); return }
+        host?.state.go(.directory(u))
     }
 
     @objc private func componentClicked() {
-        guard let u = control.clickedPathItem?.url, let st = host?.state else { return }
+        guard let item = control.clickedPathItem, let u = item.url ?? PathBarView.pathURLs[ObjectIdentifier(item)], let st = host?.state else { return }
         if case .archive(let a, _) = st.location, u.path.hasPrefix(a.path), u.path != a.path {
             let inner = String(u.path.dropFirst(a.path.count + 1)) + "/"
             st.go(.archive(a, inner: inner))
@@ -207,6 +265,20 @@ final class PathSuggestions {
 
 final class StatusBarView: NSView {
     weak var host: BrowserWindowController?
+    /// The per-view toggle buttons live on the left of the bottom bar, like the original.
+    weak var toggles: ActionToolbarView? {
+        didSet {
+            guard let t = toggles, t.superview !== self else { return }
+            t.removeFromSuperview()
+            t.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(t)
+            NSLayoutConstraint.activate([
+                t.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8), t.centerYAnchor.constraint(equalTo: centerYAnchor),
+                t.trailingAnchor.constraint(lessThanOrEqualTo: opLabel.leadingAnchor, constant: -8),
+            ])
+            label.isHidden = true
+        }
+    }
     private let label = NSTextField(labelWithString: "")
     private let right = NSTextField(labelWithString: "")
     private let progress = NSProgressIndicator()
@@ -217,7 +289,9 @@ final class StatusBarView: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        for l in [label, right, opLabel] { l.font = .systemFont(ofSize: 11); l.textColor = .secondaryLabelColor; l.lineBreakMode = .byTruncatingMiddle }
+        for l in [label, right, opLabel] { l.font = .systemFont(ofSize: 12); l.textColor = .secondaryLabelColor; l.lineBreakMode = .byTruncatingMiddle }
+        right.textColor = .labelColor
+        right.font = .systemFont(ofSize: 12, weight: .medium)
         progress.style = .bar
         progress.controlSize = .small
         progress.isIndeterminate = false
@@ -230,7 +304,7 @@ final class StatusBarView: NSView {
         let sep = NSBox(); sep.boxType = .separator
         [label, right, progress, opLabel, pauseButton, cancelButton, sep].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 22),
+            heightAnchor.constraint(equalToConstant: 30),
             sep.topAnchor.constraint(equalTo: topAnchor), sep.leadingAnchor.constraint(equalTo: leadingAnchor), sep.trailingAnchor.constraint(equalTo: trailingAnchor),
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10), label.centerYAnchor.constraint(equalTo: centerYAnchor),
             opLabel.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 12),
@@ -252,17 +326,17 @@ final class StatusBarView: NSView {
         guard let st = host?.state else { return }
         let n = st.items.count
         let selCount = st.selection.count
+        let text: String
         if selCount > 0 {
             let size = st.selection.compactMap(\.size).reduce(0, +)
-            label.stringValue = String(format: selCount == 1 ? "%lld of %lld selected" : "%lld of %lld selected", Int64(selCount), Int64(n)) + (size > 0 ? ", " + SizeFormat.string(size) : "")
+            text = String(format: "%lld of %lld selected", Int64(selCount), Int64(n)) + (size > 0 ? ", " + SizeFormat.string(size) : "")
         } else {
-            label.stringValue = String(format: n == 1 ? "%lld item" : "%lld items", Int64(n)) + (st.loading ? " — Loading..." : "")
+            let size = st.items.filter { !$0.isFolder }.compactMap(\.size).reduce(0, +)
+            text = String(format: n == 1 ? "%lld item" : "%lld items", Int64(n)) + (size > 0 ? ", " + SizeFormat.string(size) : "") + (st.loading ? " — Loading..." : "")
         }
-        if let u = st.currentDirectory, st.location.isFileSystem, let v = Volumes.volume(containing: u), let a = v.available {
-            right.stringValue = SizeFormat.string(a) + " available"
-        } else if st.isArchive, let a = st.archive {
-            right.stringValue = a.format.title + (a.isWritable ? "" : " (read-only)")
-        } else { right.stringValue = "" }
+        label.stringValue = text
+        right.stringValue = text
+        right.toolTip = st.currentDirectory.flatMap { Volumes.volume(containing: $0)?.available }.map { SizeFormat.string($0) + " available" }
         refreshProgress()
     }
 
@@ -331,6 +405,9 @@ final class BannerView: NSView {
 
 final class TitleView: NSView {
     weak var host: BrowserWindowController? { didSet { refresh() } }
+    var showsIcon = true { didSet { icon.isHidden = !showsIcon; iconWidth?.constant = showsIcon ? 16 : 0; gap?.constant = showsIcon ? 5 : 0 } }
+    private var iconWidth: NSLayoutConstraint?
+    private var gap: NSLayoutConstraint?
     private let label = NSTextField(labelWithString: "")
     private let icon = NSImageView()
     private var observer: Any?
@@ -342,11 +419,14 @@ final class TitleView: NSView {
         [icon, label].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor), icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 16), icon.heightAnchor.constraint(equalToConstant: 16),
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5), label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            icon.heightAnchor.constraint(equalToConstant: 16),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             widthAnchor.constraint(greaterThanOrEqualToConstant: 80), widthAnchor.constraint(lessThanOrEqualToConstant: 320),
         ])
+        iconWidth = icon.widthAnchor.constraint(equalToConstant: 16); iconWidth?.isActive = true
+        gap = label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5); gap?.isActive = true
+        label.font = .systemFont(ofSize: 15, weight: .semibold)
         observer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in self?.refresh() }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -384,22 +464,25 @@ final class ActionToolbarView: NSView {
         super.init(frame: frame)
         stack.orientation = .horizontal
         gallery.orientation = .horizontal
-        stack.spacing = 2; gallery.spacing = 2
+        stack.spacing = 4; gallery.spacing = 2
         [stack, gallery].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 26),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6), stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            gallery.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6), gallery.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            gallery.leadingAnchor.constraint(equalTo: stack.trailingAnchor, constant: 12), gallery.centerYAnchor.constraint(equalTo: centerYAnchor),
+            gallery.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
     private func button(_ symbol: String, _ tip: String, _ sel: Selector, on: Bool? = nil) -> NSButton {
-        let b = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)!, target: nil, action: sel)
-        b.bezelStyle = .texturedRounded
+        let img = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)!.withSymbolConfiguration(.init(pointSize: 14, weight: .regular))!
+        let b = NSButton(image: img, target: nil, action: sel)
         b.isBordered = false
         b.toolTip = tip
-        if let on { b.setButtonType(.pushOnPushOff); b.state = on ? .on : .off; b.contentTintColor = on ? .controlAccentColor : .secondaryLabelColor }
+        b.imageScaling = .scaleNone
+        b.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        b.contentTintColor = (on ?? false) ? .controlAccentColor : .secondaryLabelColor
         return b
     }
 
@@ -471,5 +554,144 @@ extension BrowserWindowController: GalleryActions {
         guard let it = state.selection.first, it.isImage, it.archivePath == nil else { return }
         do { try ImageEditor.apply(t, to: it.url); ThumbnailStore.shared.clearCache(); state.softReload(); info.refresh(force: true) }
         catch { Alerts.error("Error transforming image", error.localizedDescription, window: window) }
+    }
+}
+
+
+/// Row under the path bar with the Actions pull-down (⚡︎), like the original.
+final class ActionsRowView: NSView {
+    weak var host: BrowserWindowController?
+    private let popup = NSPopUpButton(frame: .zero, pullsDown: true)
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        popup.bezelStyle = .push
+        popup.controlSize = .regular
+        popup.isBordered = true
+        if #available(macOS 26.0, *) { popup.bezelStyle = .glass }
+        (popup.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtBottom
+        popup.menu?.delegate = self
+        let sep = NSBox(); sep.boxType = .separator
+        [popup, sep].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 38),
+            popup.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12), popup.centerYAnchor.constraint(equalTo: centerYAnchor),
+            sep.leadingAnchor.constraint(equalTo: leadingAnchor), sep.trailingAnchor.constraint(equalTo: trailingAnchor), sep.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        rebuild()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func rebuild() {
+        let m = popup.menu ?? NSMenu()
+        m.removeAllItems()
+        let title = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        title.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "Actions")?.withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
+        m.addItem(title)
+        let sel = host?.state.selection ?? []
+        for i in Menus.actionsMenu(selection: sel).items {
+            m.addItem(i.copy() as! NSMenuItem)
+        }
+        for i in m.items where i.action == #selector(BrowserWindowController.runAction(_:)) { i.target = host }
+    }
+}
+
+extension ActionsRowView: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) { rebuild() }
+}
+
+
+/// One breadcrumb: small icon + medium-weight name, borderless, with a hover highlight.
+final class CrumbButton: NSButton {
+    var url: URL?
+    var isLast = false
+    private var tracking: NSTrackingArea?
+
+    convenience init(title: String, image: NSImage?, target: AnyObject?, action: Selector) {
+        self.init(frame: .zero)
+        self.title = title
+        self.image = image
+        self.imagePosition = .imageLeading
+        self.imageHugsTitle = true
+        self.isBordered = false
+        self.target = target
+        self.action = action
+        self.font = .systemFont(ofSize: 13, weight: .regular)
+        self.contentTintColor = .labelColor
+        self.wantsLayer = true
+        self.layer?.cornerRadius = 5
+        let menu = NSMenu()
+        self.menu = menu
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = tracking { removeTrackingArea(t) }
+        tracking = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp], owner: self)
+        addTrackingArea(tracking!)
+    }
+    override func mouseEntered(with event: NSEvent) { layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor }
+    override func mouseExited(with event: NSEvent) { layer?.backgroundColor = nil }
+    override var intrinsicContentSize: NSSize { let s = super.intrinsicContentSize; return NSSize(width: s.width + 8, height: max(s.height, 22)) }
+}
+
+
+/// The "view | sort | group | remember" capsule from the original's toolbar.
+final class ViewOptionsControl: NSSegmentedControl {
+    weak var host: BrowserWindowController?
+
+    convenience init(host: BrowserWindowController) {
+        self.init(frame: .zero)
+        self.host = host
+        segmentCount = 4
+        trackingMode = .momentary
+        segmentStyle = .separated
+        if #available(macOS 26.0, *) { segmentStyle = .automatic; segmentDistribution = .fit }
+        controlSize = .large
+        target = self
+        action = #selector(clicked)
+        let tips = ["Choose File View", "Sorting", "Grouping", "Remember view options for this folder (⌘J)"]
+        for (i, t) in tips.enumerated() { setToolTip(t, forSegment: i); setWidth(i == 3 ? 40 : 52, forSegment: i) }
+        refresh()
+    }
+
+    private func img(_ name: String, chevron: Bool, updown: Bool = false) -> NSImage {
+        let cfg = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+        let base = NSImage(systemSymbolName: name, accessibilityDescription: nil)!.withSymbolConfiguration(cfg)!
+        guard chevron else { return base }
+        let chev = NSImage(systemSymbolName: updown ? "chevron.up.chevron.down" : "chevron.down", accessibilityDescription: nil)!.withSymbolConfiguration(.init(pointSize: 9, weight: .bold))!
+        let size = NSSize(width: base.size.width + chev.size.width + 4, height: max(base.size.height, chev.size.height))
+        let out = NSImage(size: size, flipped: false) { _ in
+            base.draw(at: NSPoint(x: 0, y: (size.height - base.size.height) / 2), from: .zero, operation: .sourceOver, fraction: 1)
+            chev.draw(at: NSPoint(x: base.size.width + 4, y: (size.height - chev.size.height) / 2), from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
+        out.isTemplate = true
+        return out
+    }
+
+    func refresh() {
+        guard let st = host?.state else { return }
+        setImage(img(ViewKind.toolbarSymbol(st.options.view), chevron: true, updown: true), forSegment: 0)
+        setImage(img("arrow.up.arrow.down", chevron: true), forSegment: 1)
+        setImage(img("square.grid.3x1.below.line.grid.1x2", chevron: true), forSegment: 2)
+        setImage(img(st.isRemembered ? "bookmark.fill" : "bookmark", chevron: false), forSegment: 3)
+    }
+
+    @objc private func clicked() {
+        guard let host else { return }
+        let seg = selectedSegment
+        let menu: NSMenu?
+        switch seg {
+        case 0: menu = Menus.viewKindMenu(target: host)
+        case 1: menu = Menus.sortMenu(target: host)
+        case 2: menu = Menus.groupMenu(target: host)
+        default: host.toggleRemember(nil); refresh(); return
+        }
+        guard let menu else { return }
+        var x: CGFloat = 0
+        for i in 0..<seg { x += width(forSegment: i) }
+        menu.popUp(positioning: nil, at: NSPoint(x: x, y: bounds.height + 4), in: self)
+        refresh()
     }
 }

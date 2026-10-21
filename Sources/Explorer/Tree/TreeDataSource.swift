@@ -15,14 +15,29 @@ enum TreeBuilder {
         let prefs = Preferences.shared
         var out: [TreeNode] = []
         for s in prefs.sidebarSections where !s.disabled {
-            let n = TreeNode(.section(s.id), title: s.label, symbol: s.icon)
+            let n: TreeNode
+            if s.id == "home" {
+                n = TreeNode(.folder(prefs.homeURL), title: s.label, symbol: s.icon)
+                n.children = nil
+            } else {
+                n = TreeNode(.section(s.id), title: s.label, symbol: s.icon)
+            }
             n.isTopLevel = true
             n.color = color(s.colorIndex)
             n.sectionID = s.id
-            n.children = children(ofSection: s.id, network: network)
+            if s.id != "home" { n.children = children(ofSection: s.id, network: network) }
+            if s.id == "hd" || s.id == "ed" {
+                // Flatten: each drive becomes a top-level node of its own.
+                for d in n.children ?? [] {
+                    d.isTopLevel = true; d.parent = nil; d.sectionID = s.id; d.color = color(s.colorIndex)
+                    out.append(d)
+                }
+                continue
+            }
             for c in n.children ?? [] { c.parent = n; c.sectionID = s.id; c.color = c.color ?? n.color }
             // Hide empty device-type sections like the original (no external drives → no node)
             if ["ed", "nd", "idevice", "cs", "remote"].contains(s.id), n.children?.isEmpty ?? true { continue }
+            if s.id == "favorites" { n.color = .systemYellow; n.symbol = "star.fill" }
             out.append(n)
         }
         return out
@@ -39,10 +54,8 @@ enum TreeBuilder {
                 return n
             }
         case "home":
-            let u = prefs.homeURL
-            let n = folderNode(u, title: FileNaming.displayName(of: u))
-            n.symbol = "house"
-            return [n]
+            // The section node itself is the home folder (selectable); its children are loaded lazily.
+            return []
         case "hd":
             return Volumes.internalDrives().map { volumeNode($0, symbol: "internaldrive") }
         case "ed":
@@ -104,8 +117,27 @@ enum TreeBuilder {
         }
     }
 
+    /// Symbols the original uses for well-known folders.
+    static func specialSymbol(_ u: URL) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        let p = u.standardizedFileURL.path
+        switch p {
+        case "/Applications", home + "/Applications": return "a.square"
+        case home + "/Desktop": return "menubar.dock.rectangle"
+        case home + "/Documents": return "doc.on.doc"
+        case home + "/Downloads": return "arrow.down.circle"
+        case home + "/Movies": return "film"
+        case home + "/Music": return "music.note.list"
+        case home + "/Pictures": return "photo"
+        case home + "/Public": return "figure.walk.diamond"
+        case home: return "house"
+        default: return nil
+        }
+    }
+
     static func folderNode(_ u: URL, title: String? = nil) -> TreeNode {
         let n = TreeNode(.folder(u), title: title ?? FileNaming.displayName(of: u, preferPathNames: Preferences.shared.preferPathNames))
+        n.symbol = specialSymbol(u)
         if Preferences.shared.showFolderLabelColor,
            let ln = try? u.resourceValues(forKeys: [.labelNumberKey]).labelNumber, ln > 0 {
             n.labelColor = ItemStyle.labelColor(ln)

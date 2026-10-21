@@ -6,6 +6,7 @@ import ExplorerKit
 /// Everything one tab shows: location, history, contents, selection and view options.
 final class BrowserState: ObservableObject {
     let prefs = Preferences.shared
+    static let sessionStart = Date()
 
     @Published private(set) var location: Location
     @Published private(set) var items: [FileItem] = []
@@ -79,7 +80,10 @@ final class BrowserState: ObservableObject {
 
     var title: String {
         if let t = tabTitle, !t.isEmpty { return t }
-        if case .directory(let u) = location { return FileNaming.displayName(of: u, preferPathNames: prefs.preferPathNames) }
+        if case .directory(let u) = location {
+            if u.standardizedFileURL.path == prefs.homeURL.standardizedFileURL.path { return "Home" }
+            return FileNaming.displayName(of: u, preferPathNames: prefs.preferPathNames)
+        }
         return location.title
     }
 
@@ -267,13 +271,12 @@ final class BrowserState: ObservableObject {
 
     private func finishLoad(_ token: UUID, _ list: [FileItem]) {
         guard token == loadToken else { return }
-        let old = Dictionary(allItems.map { ($0.id, $0.modified) }, uniquingKeysWith: { a, _ in a })
         allItems = list
-        if prefs.boldRecentChanges, !old.isEmpty {
-            var changed = recentlyChanged
-            for it in list where old[it.id] == nil || old[it.id]! != it.modified { changed.insert(it.id) }
-            recentlyChanged = changed
-        } else if old.isEmpty {
+        if prefs.boldRecentChanges {
+            // Like the original: items modified since Explorer was launched are shown in bold.
+            let cutoff = BrowserState.sessionStart
+            recentlyChanged = Set(list.filter { !$0.isFolder && ($0.modified ?? .distantPast) >= cutoff }.map(\.id))
+        } else {
             recentlyChanged = []
         }
         loading = false
@@ -300,7 +303,19 @@ final class BrowserState: ObservableObject {
         }
         let sorted = Sorter.sort(list, by: options.sortKey, order: options.sortOrder, folders: options.folders)
         items = sorted
-        groups = Sorter.group(sorted, by: options.grouping)
+        if options.grouping != .none && options.grouping != .kind && options.folders != .mixed {
+            // Folders first/last: folders get their own group instead of being bucketed by date/size/…
+            let folders = sorted.filter(\.isFolder), files = sorted.filter { !$0.isFolder }
+            var g = Sorter.group(files, by: options.grouping)
+            if !folders.isEmpty {
+                let fg = ItemGroup(id: "folders", title: "Folders", order: 0, items: folders)
+                if options.folders == .first { g.insert(fg, at: 0) } else { g.append(fg) }
+            }
+            groups = g
+            items = g.flatMap(\.items)
+        } else {
+            groups = Sorter.group(sorted, by: options.grouping)
+        }
         // Keep selection pointing at fresh values
         let ids = Set(selection.map(\.id))
         if !ids.isEmpty { selection = sorted.filter { ids.contains($0.id) } }

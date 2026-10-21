@@ -15,7 +15,8 @@ enum DebugSnapshot {
             delay += 1.2
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay + 1) {
-            snapshot(to: out)
+            // "/dev/null" = drive the script only (external screencapture); cacheDisplay can drop system materials.
+            if out != "/dev/null" { snapshot(to: out) }
             if env["EXPLORER_SNAPSHOT_QUIT"] != nil { NSApp.terminate(nil) }
         }
     }

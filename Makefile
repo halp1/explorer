@@ -6,7 +6,18 @@ APP := build/Explorer.app
 SIGN_ID ?= -
 BIN = $(shell swift build $(SWIFT_FLAGS) -c $(CONFIG) --show-bin-path)
 
-.PHONY: all build app run test clean icon
+.PHONY: all build app run test clean icon install release
+
+release:
+	$(MAKE) app CONFIG=release
+
+# Installs to ~/Applications (no admin needed) and registers with Launch Services.
+install: release
+	rm -rf "$(HOME)/Applications/Explorer.app"
+	mkdir -p "$(HOME)/Applications"
+	ditto build/Explorer.app "$(HOME)/Applications/Explorer.app"
+	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$(HOME)/Applications/Explorer.app"
+	@echo "Installed $(HOME)/Applications/Explorer.app"
 
 all: app
 
@@ -16,10 +27,10 @@ build:
 
 icon: build/AppIcon.icns
 
-build/AppIcon.icns: scripts/make-icon.swift
-	@mkdir -p build/AppIcon.iconset
-	swift scripts/make-icon.swift build/AppIcon.iconset
-	iconutil -c icns build/AppIcon.iconset -o $@
+build/AppIcon.icns: scripts/make-icon.swift $(wildcard Resources/AppIcon.icns)
+	@mkdir -p build
+	@if [ -f Resources/AppIcon.icns ]; then cp Resources/AppIcon.icns $@; else \
+	  mkdir -p build/AppIcon.iconset && swift scripts/make-icon.swift build/AppIcon.iconset && iconutil -c icns build/AppIcon.iconset -o $@; fi
 
 app: build icon
 	rm -rf $(APP)

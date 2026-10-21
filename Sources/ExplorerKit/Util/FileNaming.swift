@@ -94,6 +94,15 @@ public enum SizeFormat {
     public static func string(_ bytes: Int64?, style: ByteCountFormatter.CountStyle = .file) -> String {
         guard let b = bytes else { return "--" }
         if b == 0 { return "Zero bytes" }
-        return ByteCountFormatter.string(fromByteCount: b, countStyle: style)
+        // Three significant digits like the original ("49.8 KB", "1.81 KB", "143 KB"); bytes spelled out.
+        if b < 1000 { return "\(b) bytes" }
+        let units = ["KB", "MB", "GB", "TB", "PB"]
+        var v = Double(b) / 1000
+        var i = 0
+        while v >= 999.5 && i < units.count - 1 { v /= 1000; i += 1 }
+        let digits = v < 10 ? 2 : (v < 100 ? 1 : 0)
+        var str = String(format: "%.\(digits)f", v)
+        if str.contains(".") { while str.hasSuffix("0") { str.removeLast() }; if str.hasSuffix(".") { str.removeLast() } }
+        return "\(str) \(units[i])"
     }
 }

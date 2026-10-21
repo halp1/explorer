@@ -83,6 +83,8 @@ public enum Sorter {
             if folders != .mixed, a.isFolder != b.isFolder {
                 return folders == .first ? a.isFolder : !a.isFolder
             }
+            // Visible items before hidden ones (as the original lists dot-files after regular files).
+            if a.isHidden != b.isHidden { return !a.isHidden }
             let c = compare(a, b, key)
             if c == .orderedSame {
                 // stable tiebreak by name, always ascending
@@ -181,7 +183,7 @@ public enum Sorter {
         let days = cal.dateComponents([.day], from: cal.startOfDay(for: d), to: cal.startOfDay(for: now)).day ?? 0
         if days == 0 { return ("today", "Today", 0) }
         if days == 1 { return ("yesterday", "Yesterday", 1) }
-        if days < 7 { return ("7", "Previous 7 Days", 2) }
+        if days <= 7 { return ("7", "Previous 7 Days", 2) }
         if days < 30 { return ("30", "Previous 30 Days", 3) }
         let comps = cal.dateComponents([.year, .month], from: d)
         let nowYear = cal.component(.year, from: now)

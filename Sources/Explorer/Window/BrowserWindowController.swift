@@ -19,9 +19,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     let statusBar = StatusBarView()
     let banner = BannerView()
     let actionBar = ActionToolbarView()
+    let actionsRow = ActionsRowView()
     private var cancellables: Set<AnyCancellable> = []
     private var searchField: NSSearchField?
     private var viewPicker: NSSegmentedControl?
+    private weak var viewMenuItem: NSMenuToolbarItem?
+    private weak var viewPopup: NSPopUpButton?
+    weak var searchItem: NSSearchToolbarItem?
+    weak var viewOptionsControl: ViewOptionsControl?
     private var qlItems: [URL] = []
 
     static var all: [BrowserWindowController] = []
@@ -66,6 +71,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.spacing = 0
+        stack.alignment = .width   // every row spans the full width (default .centerX shrinks rows to fit)
         stack.translatesAutoresizingMaskIntoConstraints = false
         centerRoot.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -88,7 +94,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             shelf.view.trailingAnchor.constraint(equalTo: middle.trailingAnchor), shelf.view.topAnchor.constraint(equalTo: middle.topAnchor),
             shelf.view.bottomAnchor.constraint(equalTo: middle.bottomAnchor),
         ])
-        for v in [banner, pathBar, actionBar, middle, statusBar] { stack.addArrangedSubview(v); v.setContentHuggingPriority(.defaultHigh, for: .vertical) }
+        actionsRow.host = self
+        for v in [banner, pathBar, actionsRow, middle, statusBar] {
+            stack.addArrangedSubview(v)
+            v.setContentHuggingPriority(.defaultHigh, for: .vertical)
+            v.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            v.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            v.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
+            v.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
+        }
+        // The crumb row must not dictate the bar's width.
+        pathBar.setContentHuggingPriority(.init(1), for: .horizontal)
         middle.setContentHuggingPriority(.defaultLow, for: .vertical)
         center.view = centerRoot
         layoutChrome()
@@ -127,9 +143,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         let p = state.prefs
         stack.removeView(pathBar)
         if p.pathBarPosition == .top { stack.insertArrangedSubview(pathBar, at: 1) } else { stack.insertArrangedSubview(pathBar, at: stack.arrangedSubviews.count - 1) }
+        // removeView drops constraints to the stack; pin the bar to both edges again.
+        pathBar.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
+        pathBar.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
         pathBar.isHidden = !p.showPathBar
         statusBar.isHidden = !p.showStatusBar
-        actionBar.isHidden = !p.showActionToolbar
+        actionsRow.isHidden = !p.showActionToolbar
+        statusBar.toggles = actionBar
         shelf.view.isHidden = !p.showShelf
         pathBar.refresh()
     }
@@ -165,6 +185,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             if hadFocus || window?.firstResponder === window { vc.focus() }
         }
         viewPicker?.selectedSegment = ViewKind.allCases.firstIndex(of: kind) ?? 0
+        viewMenuItem?.image = NSImage(systemSymbolName: ViewKind.toolbarSymbol(kind), accessibilityDescription: "View")
+        viewPopup?.menu?.items.first?.image = NSImage(systemSymbolName: ViewKind.toolbarSymbol(kind), accessibilityDescription: "View")?.withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
+        viewPopup?.synchronizeTitleAndSelectedItem()
+        viewOptionsControl?.refresh()
         actionBar.refresh()
     }
 
@@ -271,15 +295,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         static let terminal = NSToolbarItem.Identifier("terminal")
         static let mount = NSToolbarItem.Identifier("mount")
         static let finder = NSToolbarItem.Identifier("finder")
+        static let nav = NSToolbarItem.Identifier("navGroup")
+        static let viewOptions = NSToolbarItem.Identifier("viewOptionsGroup")
+        static let searchButton = NSToolbarItem.Identifier("searchButton")
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [TB.sidebar, .sidebarTrackingSeparator, TB.dupWindow, TB.dupTab, TB.back, TB.forward, TB.up, TB.title, .flexibleSpace,
-         TB.newFolder, TB.view, TB.sort, TB.group, TB.remember, TB.search]
+        [.flexibleSpace, TB.sidebar, TB.dupWindow, TB.dupTab, .sidebarTrackingSeparator, TB.nav, TB.title, .flexibleSpace,
+         TB.newFolder, TB.viewOptions, TB.searchButton]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [TB.refresh, TB.terminal, TB.mount, TB.finder, .space]
+        toolbarDefaultItemIdentifiers(toolbar) + [TB.search, TB.remember, TB.back, TB.forward, TB.up, TB.view, TB.sort, TB.group, TB.refresh, TB.terminal, TB.mount, TB.finder, .space]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -294,17 +321,40 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             i.isBordered = true
             return i
         }
+        func plain(_ i: NSToolbarItem) -> NSToolbarItem { i.isBordered = false; return i }
         switch id {
-        case TB.sidebar: return button("Sidebar", "sidebar.leading", #selector(toggleSidebar(_:)), tip: "Toggle sidebar (⌥⌘S)")
-        case TB.dupWindow: return button("Duplicate Window", "macwindow.on.rectangle", #selector(duplicateWindow(_:)), tip: "Open current directory in a new window")
-        case TB.dupTab: return button("Duplicate Tab", "plus.rectangle.on.rectangle", #selector(duplicateTab(_:)), tip: "Open current directory in a new tab")
+        case TB.sidebar: return plain(button("Sidebar", "sidebar.leading", #selector(toggleSidebar(_:)), tip: "Toggle sidebar (⌥⌘S)"))
+        case TB.dupWindow: return plain(button("Duplicate Window", "macwindow.on.rectangle", #selector(duplicateWindow(_:)), tip: "Open current directory in a new window"))
+        case TB.dupTab: return plain(button("Duplicate Tab", "plus.rectangle.on.rectangle", #selector(duplicateTab(_:)), tip: "Open current directory in a new tab"))
+        case TB.nav:
+            let g = NSToolbarItemGroup(itemIdentifier: id)
+            g.subitems = [
+                button("Back", "chevron.backward", #selector(goBack(_:)), tip: "Go to the previous folder (⌘[)"),
+                button("Forward", "chevron.forward", #selector(goForward(_:)), tip: "Go to the next folder (⌘])"),
+                button("Enclosing Folder", "arrow.turn.left.up", #selector(goUp(_:)), tip: "Go to the enclosing folder (⌘↑)"),
+            ]
+            g.subitems[0].isNavigational = true
+            g.label = "Navigate"
+            g.paletteLabel = "Back / Forward / Up"
+            g.controlRepresentation = .expanded
+            return g
+        case TB.viewOptions:
+            // One capsule holding four momentary segments; the first three open menus, the last toggles Remember.
+            let seg = ViewOptionsControl(host: self)
+            viewOptionsControl = seg
+            let i = NSToolbarItem(itemIdentifier: id)
+            i.view = seg
+            i.label = "View Options"
+            i.toolTip = "View, sorting, grouping and remembered options"
+            return i
         case TB.back: return button("Back", "chevron.backward", #selector(goBack(_:)), tip: "Go to the previous folder (⌘[)")
         case TB.forward: return button("Forward", "chevron.forward", #selector(goForward(_:)), tip: "Go to the next folder (⌘])")
         case TB.up: return button("Enclosing Folder", "arrow.turn.left.up", #selector(goUp(_:)), tip: "Go to the enclosing folder (⌘↑)")
         case TB.title:
             let i = NSToolbarItem(itemIdentifier: id)
-            let t = TitleView(); t.host = self
+            let t = TitleView(); t.host = self; t.showsIcon = false
             i.view = t
+            i.isBordered = false
             i.label = "Current Folder"
             i.visibilityPriority = .high
             return i
@@ -336,6 +386,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             i.menu = Menus.groupMenu(target: self)
             return i
         case TB.remember: return button("Remember", "bookmark", #selector(toggleRemember(_:)), tip: "Remember view options for this folder (⌘J)")
+        case TB.searchButton:
+            // Round magnifier; clicking swaps it for the live search field (like the original).
+            return button("Search", "magnifyingglass", #selector(showSearchField(_:)), tip: "Search (⌘F)")
         case TB.search:
             let i = NSSearchToolbarItem(itemIdentifier: id)
             i.searchField.delegate = self
@@ -343,7 +396,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             i.searchField.target = self
             i.searchField.action = #selector(searchSubmitted(_:))
             i.preferredWidthForSearchField = 200
+            i.resignsFirstResponderWithCancel = true
+            i.visibilityPriority = .low
+            i.searchField.controlSize = .large
             searchField = i.searchField
+            searchItem = i
             return i
         case TB.refresh: return button("Refresh", "arrow.clockwise", #selector(refresh(_:)), tip: "Refresh (F5)")
         case TB.terminal: return button("Terminal", "terminal", #selector(openTerminalHere(_:)), tip: "Open Terminal at This Folder")
@@ -355,6 +412,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         switch item.itemIdentifier {
+        case TB.view:
+            item.image = NSImage(systemSymbolName: ViewKind.toolbarSymbol(state.options.view), accessibilityDescription: "View")
+            return true
         case TB.back: return state.canGoBack
         case TB.forward: return state.canGoForward
         case TB.up: return state.canGoUp
@@ -378,6 +438,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     @objc private func liveSearch() { if let t = searchField?.stringValue { state.search(t) } }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let f = obj.object as? NSSearchField, f === searchField else { return }
+        DispatchQueue.main.async { [weak self] in self?.collapseSearchFieldIfEmpty() }
+    }
 
     // MARK: Opening
 
