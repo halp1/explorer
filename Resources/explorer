@@ -1,0 +1,57 @@
+#!/bin/bash
+#
+# explorer: open folders and reveal files in Explorer.app from a shell.
+#
+#   explorer           new window
+#   explorer DIR       open DIR in a new window
+#   explorer FILE      open FILE's folder with FILE selected
+#
+# Works by handing the absolute path to the app's URL schemes
+# (explorer:// for folders, explorerreveal:// for items).
+
+set -euo pipefail
+
+prog=${0##*/}
+
+die_usage() {
+	printf 'usage: %s [path]\n' "$prog" >&2
+	exit 64
+}
+
+if [[ $# -gt 1 ]]; then die_usage; fi
+if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then die_usage; fi
+
+if [[ $# -eq 0 ]]; then
+	exec open "explorer:///%23"
+fi
+
+arg=$1
+
+# Percent-encode every byte outside the unreserved set, keeping '/'.
+encode() {
+	local LC_ALL=C str=$1 i ch code res=""
+	for ((i = 0; i < ${#str}; i++)); do
+		ch=${str:i:1}
+		if [[ $ch == [A-Za-z0-9._~/-] ]]; then
+			res+=$ch
+		else
+			printf -v code '%d' "'$ch"
+			res+=$(printf '%%%02X' $((code & 255)))
+		fi
+	done
+	printf '%s' "$res"
+}
+
+if [[ -d $arg ]]; then
+	path=$(cd -- "$arg" && pwd -P)
+	[[ $path == */ ]] || path+=/
+	exec open "explorer://$(encode "$path")"
+elif [[ -e $arg || -L $arg ]]; then
+	parent=$(cd -- "$(dirname -- "$arg")" && pwd -P)
+	base=$(basename -- "$arg")
+	path=${parent%/}/$base
+	exec open "explorerreveal://$(encode "$path")"
+else
+	printf '%s: %s: No such file or directory\n' "$prog" "$arg" >&2
+	exit 66
+fi
