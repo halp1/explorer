@@ -22,7 +22,13 @@ final class SettingsWindowController: NSWindowController {
         w.title = "Settings"
         w.setFrameAutosaveName("ExplorerSettings")
         super.init(window: w)
-        w.contentViewController = NSHostingController(rootView: SettingsRoot(model: model).environmentObject(Preferences.shared))
+        let host = NSHostingController(rootView: SettingsRoot(model: model).environmentObject(Preferences.shared)
+            .frame(minWidth: 760, idealWidth: 828, minHeight: 480, idealHeight: 552))
+        // Don't let SwiftUI's ideal size shrink the window to its title bar.
+        if #available(macOS 13.0, *) { host.sizingOptions = [.minSize] }
+        w.contentViewController = host
+        w.minSize = NSSize(width: 760, height: 480)
+        w.setContentSize(NSSize(width: 828, height: 552))
         w.center()
     }
     required init?(coder: NSCoder) { fatalError() }
