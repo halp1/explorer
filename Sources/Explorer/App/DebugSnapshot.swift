@@ -29,6 +29,7 @@ enum DebugSnapshot {
         case "go": c.state.go(.directory(URL(fileURLWithPath: arg, isDirectory: true)))
         case "archive": c.state.go(.archive(URL(fileURLWithPath: arg), inner: ""))
         case "select": if let i = Int(arg), c.state.items.indices.contains(i) { c.state.selection = [c.state.items[i]] }
+        case "selectext": if let it = c.state.items.first(where: { $0.fileExtension.lowercased() == arg.lowercased() }) { c.state.selection = [it] }
         case "info": c.state.options.showInfo = arg == "1"
         case "group": if let g = GroupKey(rawValue: arg) { c.state.options.grouping = g }
         case "settings": AppDelegate.shared.showSettingsTab(SettingsTab(rawValue: arg) ?? .general)

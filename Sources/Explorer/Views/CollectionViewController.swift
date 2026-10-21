@@ -131,6 +131,11 @@ final class CollectionViewController: NSViewController, FileViewing, NSCollectio
         return ci
     }
 
+    func collectionView(_ cv: NSCollectionView, layout: NSCollectionViewLayout, referenceSizeForHeaderInSection section: Int) -> NSSize {
+        guard state.options.grouping != .none, sections.indices.contains(section), !sections[section].title.isEmpty else { return .zero }
+        return NSSize(width: cv.bounds.width, height: mode == .icons ? 28 : 22)
+    }
+
     func collectionView(_ cv: NSCollectionView, viewForSupplementaryElementOfKind kind: NSCollectionView.SupplementaryElementKind, at ip: IndexPath) -> NSView {
         let v = cv.makeSupplementaryView(ofKind: kind, withIdentifier: GroupHeaderView.id, for: ip) as! GroupHeaderView
         v.label.stringValue = "\(sections[ip.section].title)  (\(sections[ip.section].items.count))"

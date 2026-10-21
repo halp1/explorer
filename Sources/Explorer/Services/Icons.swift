@@ -51,7 +51,7 @@ final class ThumbnailStore {
             }
         }
 
-        if item.isFolder {
+        if item.isFolder && !item.isPackage {
             guard folderStyle != .systemIcon else { finish(nil); return }
             DispatchQueue.global(qos: .utility).async {
                 finish(FolderThumb.render(item.url, size: size, style: folderStyle))
@@ -61,13 +61,21 @@ final class ThumbnailStore {
 
         if Preferences.shared.persistentThumbnailCache, let img = loadDisk(k) { finish(img); return }
 
+        // Packages (apps, bundles) keep their system icon: QL "thumbnails" of bundles are often blank.
+        if item.isPackage || item.isDirectory { finish(nil); return }  // keep NSWorkspace icon
         let req = QLThumbnailGenerator.Request(fileAt: item.url, size: CGSize(width: size, height: size), scale: scale, representationTypes: .thumbnail)
         QLThumbnailGenerator.shared.generateBestRepresentation(for: req) { [weak self] rep, _ in
-            guard let rep else { finish(nil); return }
+            guard let rep, rep.type == .thumbnail || !Self.isEmpty(rep.nsImage) else { finish(nil); return }
             let img = rep.nsImage
             if Preferences.shared.persistentThumbnailCache { self?.saveDisk(k, img) }
             finish(img)
         }
+    }
+
+    /// Detects fully transparent/blank representations (seen for some bundle types).
+    static func isEmpty(_ img: NSImage) -> Bool {
+        guard let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return true }
+        return cg.width < 2 || cg.height < 2
     }
 
     // MARK: Disk cache (≤ 1 GB, LRU by access date)
