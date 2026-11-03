@@ -15,7 +15,7 @@ final class ThumbnailStore {
 
     static func icon(for item: FileItem, size: CGFloat = 64) -> NSImage {
         let img: NSImage
-        if item.archivePath != nil {
+        if !item.isLocalFile {
             if item.isDirectory { img = NSWorkspace.shared.icon(for: .folder) }
             else { img = NSWorkspace.shared.icon(for: item.utType ?? .data) }
         } else {
@@ -33,7 +33,7 @@ final class ThumbnailStore {
 
     /// Asynchronously generates a thumbnail; completion on main queue.
     func thumbnail(for item: FileItem, size: CGFloat, scale: CGFloat, folderStyle: FolderThumbnails, completion: @escaping (NSImage) -> Void) {
-        guard item.archivePath == nil else { return }
+        guard item.isLocalFile else { return }
         let k = key(item.url, Int(size), item.modified)
         if let img = memory.object(forKey: k as NSString) { completion(img); return }
         lock.lock()
@@ -133,6 +133,7 @@ final class ThumbnailStore {
 /// Content-aware folder icons ("Content grid" / "Content fan").
 enum FolderThumb {
     static func render(_ dir: URL, size: CGFloat, style: FolderThumbnails) -> NSImage? {
+        guard LocalFileBoundary.accepts(dir) else { return nil }
         let children = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [])
             .sorted { $0.lastPathComponent < $1.lastPathComponent }.prefix(style == .contentGrid ? 4 : 3)
         guard !children.isEmpty else { return nil }

@@ -64,6 +64,14 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
             network.$services.debounce(for: .seconds(1), scheduler: RunLoop.main).sink { [weak self] _ in self?.rebuild() }.store(in: &cancellables)
         }
         IDeviceRegistry.shared.$devices.receive(on: RunLoop.main).sink { [weak self] _ in self?.rebuild() }.store(in: &cancellables)
+        MTPService.shared.$devices.receive(on: RunLoop.main).sink { [weak self] devices in
+            guard let self else { return }
+            self.rebuild()
+            if let address = self.host?.state.mtpLocation,
+               !devices.contains(where: { $0.address.sessionID == address.sessionID && $0.id == address.deviceID }) {
+                self.host?.state.reload()
+            }
+        }.store(in: &cancellables)
         rebuild(initial: true)
     }
 
@@ -173,6 +181,27 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
             return find(.directory(s.scope))
         case .device(let udid, let path):
             return allLoaded().first { $0.url == IDeviceRegistry.virtualURL(udid, path) }
+        case .mtp(let address):
+            if !Preferences.shared.autoExpandTree {
+                return allLoaded().first(where: { $0.identity == address.id })
+            }
+            var ancestry: [MTPAddress] = []
+            var current: MTPAddress? = address
+            while let part = current {
+                ancestry.insert(part, at: 0)
+                current = part.parent
+            }
+            var deepest: TreeNode?
+            for part in ancestry {
+                guard let node = allLoaded().first(where: { $0.identity == part.id }) else { break }
+                deepest = node
+                if part.id != address.id {
+                    if node.children == nil { loadChildren(node) }
+                    outline.expandItem(node)
+                    expanded.insert(node.identity)
+                }
+            }
+            return deepest
         }
     }
 
@@ -183,11 +212,51 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         return out
     }
 
+    private func loadChildren(_ node: TreeNode) {
+        guard case .mtp(let address) = node.kind else {
+            TreeBuilder.loadChildren(node)
+            return
+        }
+        guard !node.isLoading else { return }
+        node.isLoading = true
+        node.loadError = nil
+        let loading = TreeNode(.placeholder("Loading..."), title: "Loading...")
+        loading.parent = node
+        node.children = [loading]
+        let hidden = Preferences.shared.showHiddenInTree
+        DispatchQueue.global(qos: .userInitiated).async { [weak self, weak node] in
+            let result = Result { try MTPService.shared.list(address) }
+            DispatchQueue.main.async {
+                guard let self, let node, self.allLoaded().contains(where: { $0 === node }) else { return }
+                node.isLoading = false
+                switch result {
+                case .success(let items):
+                    node.children = items.filter { $0.isDirectory && (hidden || !$0.isHidden) }.compactMap { item in
+                        guard let childAddress = item.mtpAddress else { return nil }
+                        let child = TreeNode(.mtp(childAddress), title: item.name, symbol: "folder")
+                        child.parent = node
+                        child.sectionID = node.sectionID
+                        child.color = node.color
+                        return child
+                    }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+                case .failure(let error):
+                    node.loadError = error.localizedDescription
+                    let failed = TreeNode(.placeholder("Retry Loading Folder"), title: "Retry Loading Folder", symbol: "arrow.clockwise")
+                    failed.loadError = error.localizedDescription
+                    failed.parent = node
+                    node.children = [failed]
+                }
+                self.outline.reloadItem(node, reloadChildren: true)
+                if case .success = result { self.revealCurrent() }
+            }
+        }
+    }
+
     // MARK: Data source
 
     func outlineView(_ ov: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         guard let n = item as? TreeNode else { return roots.count }
-        if n.children == nil { TreeBuilder.loadChildren(n) }
+        if n.children == nil { loadChildren(n) }
         return n.children?.count ?? 0
     }
 
@@ -224,7 +293,11 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
     }
 
     func outlineViewItemDidCollapse(_ notification: Notification) {
-        if let n = notification.userInfo?["NSObject"] as? TreeNode { expanded.remove(n.identity); host?.treeExpansionChanged() }
+        if let n = notification.userInfo?["NSObject"] as? TreeNode {
+            expanded.remove(n.identity)
+            if n.loadError != nil { n.children = nil }
+            host?.treeExpansionChanged()
+        }
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -236,6 +309,11 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         // Clicking a section toggles it
         let row = outline.clickedRow
         guard row >= 0, let n = outline.item(atRow: row) as? TreeNode else { return }
+        if case .placeholder = n.kind, n.loadError != nil, let parent = n.parent {
+            loadChildren(parent)
+            outline.reloadItem(parent, reloadChildren: true)
+            return
+        }
         if case .section = n.kind {
             if outline.isItemExpanded(n) { outline.collapseItem(n) } else { outline.expandItem(n) }
         }
@@ -291,6 +369,10 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
 
     func outlineView(_ ov: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         let n = item as! TreeNode
+        if case .mtp(let address) = n.kind {
+            guard address.objectID != nil else { return nil }
+            return DragOut.mtpWriter(address: address, isDirectory: true, name: n.title, typeIdentifier: "public.folder")
+        }
         if n.isFavorite && Preferences.shared.reorderFavorites {
             let pb = NSPasteboardItem()
             if let u = n.url { pb.setString(u.absoluteString, forType: .fileURL) }
@@ -324,6 +406,7 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
     private func validateOn(_ n: TreeNode, _ info: NSDraggingInfo) -> NSDragOperation {
         if case .archiveDir = n.kind { return .copy }
         if case .trash = n.kind { return .delete }
+        if case .mtp(let address) = n.kind { return DropIn.validate(info, dest: address.url, state: nil) }
         guard case .folder(let u) = n.kind else { return [] }
         return DropIn.validate(info, dest: u, state: nil)
     }
@@ -341,6 +424,8 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
             return true
         }
         switch n.kind {
+        case .mtp(let address):
+            return DropIn.perform(info, dest: address.url, state: host?.state, window: view.window)
         case .folder(let u):
             return DropIn.perform(info, dest: u, state: nil, window: view.window)
         case .archiveDir(let u, let inner):
@@ -443,6 +528,7 @@ final class TreeCell: NSTableCellView {
 
     func configure(_ n: TreeNode) {
         node = n
+        toolTip = n.loadError
         let p = Preferences.shared
         label.stringValue = n.title
         label.lineBreakMode = ItemStyle.truncation(p.truncateFolders)

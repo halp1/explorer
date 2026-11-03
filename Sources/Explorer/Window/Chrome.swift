@@ -67,6 +67,12 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
         crumbs.isHidden = !interactive
         field.isHidden = interactive
         field.isEditable = editing
+        if let address = st.mtpLocation {
+            buildMTPCrumbs(address)
+            field.stringValue = ([address.deviceName] + [address.storageName].compactMap { $0 } + address.components.map(\.name)).joined(separator: " / ")
+            field.isEditable = false
+            return
+        }
         let url: URL?
         switch st.location {
         case .archive(let a, let inner): url = a.appendingPathComponent(inner)
@@ -118,8 +124,37 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
         }
     }
 
+    private func buildMTPCrumbs(_ address: MTPAddress) {
+        crumbs.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        var addresses: [MTPAddress] = []
+        var current: MTPAddress? = address
+        while let part = current {
+            addresses.insert(part, at: 0)
+            current = part.parent
+        }
+        for (index, part) in addresses.enumerated() {
+            let symbol = part.objectID != nil ? "folder" : "externaldrive"
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            image?.size = NSSize(width: 16, height: 16)
+            let button = CrumbButton(title: part.title, image: image, target: self, action: #selector(crumbClicked(_:)))
+            button.url = part.url
+            button.isLast = index == addresses.count - 1
+            crumbs.addArrangedSubview(button)
+            if index < addresses.count - 1 {
+                let chevron = NSImageView(image: NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)!)
+                chevron.contentTintColor = .secondaryLabelColor
+                crumbs.addArrangedSubview(chevron)
+            }
+        }
+    }
+
     @objc private func crumbClicked(_ b: CrumbButton) {
         guard let u = b.url else { return }
+        if let address = MTPAddress(url: u) {
+            if NSEvent.modifierFlags.contains(.command) { AppDelegate.shared.openTab(.mtp(address), from: host) }
+            else { host?.state.go(.mtp(address)) }
+            return
+        }
         if NSEvent.modifierFlags.contains(.command) { AppDelegate.shared.openTab(.directory(u), from: host); return }
         host?.state.go(.directory(u))
     }
@@ -141,6 +176,7 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
     @objc private func beginEditingFromClick() { beginEditing() }
 
     func beginEditing() {
+        guard host?.state.mtpLocation == nil else { return }
         editing = true
         isHidden = false
         refresh()
@@ -558,7 +594,7 @@ extension BrowserWindowController: GalleryActions {
 
     func imageTransform(_ t: ImageTransform) {
         if let g = gallery { g.transform(t); return }
-        guard let it = state.selection.first, it.isImage, it.archivePath == nil else { return }
+        guard let it = state.selection.first, it.isImage, it.isLocalFile else { return }
         do { try ImageEditor.apply(t, to: it.url); ThumbnailStore.shared.clearCache(); state.softReload(); info.refresh(force: true) }
         catch { Alerts.error("Error transforming image", error.localizedDescription, window: window) }
     }

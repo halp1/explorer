@@ -6,6 +6,7 @@ final class TreeNode: NSObject {
     enum Kind: Equatable {
         case section(String)                 // top-level unselectable group (id)
         case folder(URL)                     // navigable directory
+        case mtp(MTPAddress)
         case archiveDir(URL, String)         // archive (or folder inside one) shown in tree
         case smart(SmartNode)
         case trash
@@ -21,6 +22,8 @@ final class TreeNode: NSObject {
     var color: NSColor?
     weak var parent: TreeNode?
     var children: [TreeNode]?   // nil = not loaded yet
+    var isLoading = false
+    var loadError: String?
     var isTopLevel = false
     var isFavorite = false
     var isVolume = false
@@ -35,6 +38,7 @@ final class TreeNode: NSObject {
     var url: URL? {
         switch kind {
         case .folder(let u): return u
+        case .mtp(let address): return address.url
         case .archiveDir(let u, _): return u
         case .trash: return Volumes.userTrash
         default: return nil
@@ -47,6 +51,7 @@ final class TreeNode: NSObject {
             if let (udid, path) = IDeviceRegistry.parseVirtual(u) { return .device(udid: udid, path: path) }
             if u.standardizedFileURL.path == Volumes.userTrash.standardizedFileURL.path { return .trash }
             return .directory(u)
+        case .mtp(let address): return .mtp(address)
         case .archiveDir(let u, let inner): return .archive(u, inner: inner)
         case .smart(let n): return .smart(n)
         case .trash: return .trash
@@ -61,6 +66,7 @@ final class TreeNode: NSObject {
     var isExpandable: Bool {
         switch kind {
         case .section: return true
+        case .mtp: return isLoading || loadError != nil || children.map { !$0.isEmpty } ?? true
         case .folder(let u):
             if let c = children { return !c.isEmpty }
             if IDeviceRegistry.parseVirtual(u) != nil { return true }
@@ -92,6 +98,7 @@ final class TreeNode: NSObject {
     var identity: String {
         switch kind {
         case .section(let id): return "s:" + id
+        case .mtp(let address): return address.id
         case .folder(let u): return (sectionID ?? "") + ":" + u.standardizedFileURL.path
         case .archiveDir(let u, let i): return "a:" + u.path + "#" + i
         case .smart(let n): return "m:\(n)"

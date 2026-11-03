@@ -45,7 +45,7 @@ final class BrowserState: ObservableObject {
     var passwordProvider: ((URL) -> String?)?
 
     init(location: Location) {
-        self.location = location
+        self.location = Self.normalized(location)
         self.options = Preferences.shared.defaultViewOptions
         applyRememberedOptions()
     }
@@ -69,11 +69,17 @@ final class BrowserState: ObservableObject {
     var isSmart: Bool { if case .smart = location { return true }; return false }
     var isTrash: Bool { if case .trash = location { return true }; return false }
     var deviceLocation: (udid: String, path: String)? { if case .device(let u, let p) = location { return (u, p) }; return nil }
+    var mtpLocation: MTPAddress? {
+        if case .mtp(let address) = location { return address }
+        return nil
+    }
+    var isDevice: Bool { deviceLocation != nil || mtpLocation != nil }
     var archiveInner: String { if case .archive(_, let i) = location { return i }; return "" }
     var canWrite: Bool {
         switch location {
         case .directory(let u): return FileManager.default.isWritableFile(atPath: u.path)
         case .archive: return archive?.isWritable ?? false
+        case .mtp(let address): return MTPService.shared.canWrite(address)
         default: return false
         }
     }
@@ -91,7 +97,16 @@ final class BrowserState: ObservableObject {
 
     // MARK: Navigation
 
-    func go(_ loc: Location, recordHistory: Bool = true, select: [URL] = []) {
+    private static func normalized(_ location: Location) -> Location {
+        if case .directory(let url) = location {
+            if let address = MTPAddress(url: url) { return .mtp(address) }
+            if let (udid, path) = IDeviceRegistry.parseVirtual(url) { return .device(udid: udid, path: path) }
+        }
+        return location
+    }
+
+    func go(_ destination: Location, recordHistory: Bool = true, select: [URL] = []) {
+        let loc = Self.normalized(destination)
         if loc == location && !select.isEmpty {
             pendingSelection = select
             applySelection()
@@ -133,7 +148,8 @@ final class BrowserState: ObservableObject {
 
     func goUp() {
         guard let p = location.parent else { return }
-        go(p, select: location.url.map { [$0] } ?? [])
+        let current = mtpLocation?.url ?? location.url
+        go(p, select: current.map { [$0] } ?? [])
     }
 
     var canGoBack: Bool { !backStack.isEmpty }
@@ -146,6 +162,13 @@ final class BrowserState: ObservableObject {
         if item.archivePath != nil {
             if item.isDirectory, case .archive(let u, _) = location {
                 go(.archive(u, inner: item.archivePath!)); return true
+            }
+            return false
+        }
+        if let address = item.mtpAddress ?? MTPAddress(url: item.url) {
+            if item.isDirectory {
+                go(.mtp(address))
+                return true
             }
             return false
         }
@@ -226,12 +249,22 @@ final class BrowserState: ObservableObject {
         errorMessage = nil
         warning = nil
         loading = true
+        searchGathering = false
         let loc = location
+        if !loc.isFileSystem {
+            gitWork?.cancel()
+            git = nil
+            gitStatus = [:]
+        }
         let hidden = options.showHidden
         let preferPath = prefs.preferPathNames
 
         switch loc {
         case .directory(let dir):
+            guard LocalFileBoundary.accepts(dir) else {
+                failLoad(token, OpError.message("This location is not a local folder."))
+                return
+            }
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 do {
                     let list = try FileItemLoader.list(dir, includeHidden: hidden, preferPathNames: preferPath)
@@ -257,6 +290,15 @@ final class BrowserState: ObservableObject {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 do {
                     let list = try IDeviceRegistry.shared.list(udid: udid, path: path).filter { hidden || !$0.isHidden }
+                    DispatchQueue.main.async { self?.finishLoad(token, list) }
+                } catch {
+                    DispatchQueue.main.async { self?.failLoad(token, error) }
+                }
+            }
+        case .mtp(let address):
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                do {
+                    let list = try MTPService.shared.list(address).filter { hidden || !$0.isHidden }
                     DispatchQueue.main.async { self?.finishLoad(token, list) }
                 } catch {
                     DispatchQueue.main.async { self?.failLoad(token, error) }
@@ -323,8 +365,8 @@ final class BrowserState: ObservableObject {
 
     private func applySelection() {
         guard !pendingSelection.isEmpty else { return }
-        let paths = Set(pendingSelection.map { $0.standardizedFileURL.path })
-        let sel = items.filter { paths.contains($0.url.standardizedFileURL.path) }
+        let paths = Set(pendingSelection.map(Self.selectionKey))
+        let sel = items.filter { paths.contains(Self.selectionKey($0.url)) }
         if !sel.isEmpty || !loading {
             selection = sel
             pendingSelection = []
@@ -381,7 +423,7 @@ final class BrowserState: ObservableObject {
     // MARK: Folder sizes
 
     func calculateSizes(_ urls: [URL]) {
-        for u in urls {
+        for u in urls where LocalFileBoundary.accepts(u) {
             FolderSizeCalculator.shared.calculate(u) { [weak self] size in
                 self?.folderSizes[u.path] = size
                 self?.rebuild()
@@ -443,6 +485,7 @@ final class BrowserState: ObservableObject {
     // MARK: Search
 
     func search(_ text: String) {
+        guard mtpLocation == nil else { return }
         let scope: URL
         if case .search(let s) = location { scope = s.scope } else { scope = currentDirectory ?? prefs.homeURL }
         guard !text.isEmpty else {
@@ -554,5 +597,9 @@ final class BrowserState: ObservableObject {
         applySelection()
     }
 
-    func item(at url: URL) -> FileItem? { items.first { $0.url.standardizedFileURL.path == url.standardizedFileURL.path } }
+    private static func selectionKey(_ url: URL) -> String {
+        MTPAddress(url: url)?.id ?? url.standardizedFileURL.path
+    }
+
+    func item(at url: URL) -> FileItem? { items.first { Self.selectionKey($0.url) == Self.selectionKey(url) } }
 }

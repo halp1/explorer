@@ -3,9 +3,11 @@ import UniformTypeIdentifiers
 
 /// A row in a file view. Value type, cheap to diff.
 public struct FileItem: Hashable, Identifiable, Sendable {
-    public var id: String { url.path + (archivePath ?? "") }
+    public var id: String { mtpAddress?.id ?? (url.path + (archivePath ?? "")) }
 
     public var url: URL
+    public var mtpAddress: MTPAddress?
+    public var isLocalFile: Bool { archivePath == nil && LocalFileBoundary.accepts(url) }
     /// For archive entries: the entry path inside the archive (e.g. "dir/file.txt"); nil for real files.
     public var archivePath: String?
     public var name: String
@@ -33,7 +35,7 @@ public struct FileItem: Hashable, Identifiable, Sendable {
     public var cloud: CloudStatus
     public var gitStatus: GitStatus?
 
-    public init(url: URL, archivePath: String? = nil, name: String, displayName: String? = nil,
+    public init(url: URL, archivePath: String? = nil, mtpAddress: MTPAddress? = nil, name: String, displayName: String? = nil,
                 isDirectory: Bool, isPackage: Bool = false, isSymlink: Bool = false, isAlias: Bool = false,
                 isHidden: Bool = false, isLocked: Bool = false, isVolume: Bool = false,
                 size: Int64? = nil, compressedSize: Int64? = nil, itemCount: Int? = nil,
@@ -41,6 +43,7 @@ public struct FileItem: Hashable, Identifiable, Sendable {
                 attributeChanged: Date? = nil, typeIdentifier: String? = nil, kind: String = "",
                 tags: [String] = [], labelNumber: Int = 0, rating: Int = 0, cloud: CloudStatus = .local,
                 gitStatus: GitStatus? = nil) {
+        self.mtpAddress = mtpAddress
         self.url = url; self.archivePath = archivePath; self.name = name
         self.displayName = displayName ?? name
         self.isDirectory = isDirectory; self.isPackage = isPackage; self.isSymlink = isSymlink
@@ -106,6 +109,7 @@ public enum FileItemLoader {
     ]
 
     public static func load(_ urlIn: URL, preferPathNames: Bool = false) -> FileItem? {
+        guard LocalFileBoundary.accepts(urlIn) else { return nil }
         var url = urlIn
         url.removeAllCachedResourceValues()
         guard let v = try? url.resourceValues(forKeys: Set(resourceKeys)) else {
@@ -154,6 +158,7 @@ public enum FileItemLoader {
 
     /// Lists a directory. Throws `FolderAccessError` on permission failures.
     public static func list(_ dir: URL, includeHidden: Bool, preferPathNames: Bool = false) throws -> [FileItem] {
+        try LocalFileBoundary.require([dir])
         let fm = FileManager.default
         var opts: FileManager.DirectoryEnumerationOptions = []
         if !includeHidden { opts.insert(.skipsHiddenFiles) }
@@ -171,6 +176,7 @@ public enum FileItemLoader {
     nonisolated(unsafe) static var packageSizes: [String: (Date?, Int64)] = [:]
     static let packageLock = NSLock()
     public static func packageSize(_ url: URL) -> Int64 {
+        guard LocalFileBoundary.accepts(url) else { return 0 }
         let mod = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         packageLock.lock()
         if let c = packageSizes[url.path], c.0 == mod { packageLock.unlock(); return c.1 }
@@ -188,6 +194,7 @@ public enum FileItemLoader {
     }
 
     public static func childCount(_ dir: URL, includeHidden: Bool) -> Int? {
+        guard LocalFileBoundary.accepts(dir) else { return nil }
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return nil }
         return includeHidden ? names.count : names.filter { !$0.hasPrefix(".") }.count
     }

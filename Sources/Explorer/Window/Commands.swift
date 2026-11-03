@@ -10,7 +10,10 @@ extension BrowserWindowController {
     var ops: FileOps { .shared }
     /// Targets for commands that work on "selection, or current folder when nothing is selected".
     var selOrCurrent: [URL] { selURLs.isEmpty ? (state.currentDirectory.map { [$0] } ?? []) : selURLs }
-    var realSelection: [URL] { sel.filter { $0.archivePath == nil && IDeviceRegistry.parseVirtual($0.url) == nil }.map(\.url) }
+    var realSelection: [URL] { sel.filter(\.isLocalFile).map(\.url) }
+    var localContext: Bool { !state.isDevice && sel.allSatisfy { LocalFileBoundary.accepts($0.url) && $0.mtpAddress == nil } }
+    var mtpSelection: [MTPAddress] { sel.compactMap(\.mtpAddress) }
+    var canMutateMTPSelection: Bool { !sel.isEmpty && mtpSelection.count == sel.count && mtpSelection.allSatisfy(MTPOps.canMutate) }
 
     // MARK: Validation
 
@@ -18,24 +21,56 @@ extension BrowserWindowController {
         let hasSel = !sel.isEmpty
         let fs = state.location.isFileSystem
         let writable = state.canWrite
+        if !localContext {
+            switch item.action {
+            case #selector(cut(_:)), #selector(cutInternal(_:)), #selector(moveItemHere(_:)),
+                 #selector(newFolderWithSelection(_:)), #selector(newEmptyFile(_:)), #selector(newFileFromClipboard(_:)), #selector(newDocument(_:)),
+                 #selector(pasteAsSymlinks(_:)), #selector(pasteAsAliases(_:)), #selector(duplicate(_:)), #selector(touch(_:)),
+                 #selector(batchRename(_:)), #selector(compress(_:)), #selector(compressTo(_:)), #selector(extract(_:)), #selector(extractAll(_:)), #selector(extractHere(_:)),
+                 #selector(setRating(_:)), #selector(addTextTag(_:)), #selector(toggleColorTag(_:)), #selector(toggleTextTag(_:)),
+                 #selector(revealInFinder(_:)), #selector(openInFinder(_:)), #selector(showInfoInFinder(_:)), #selector(openTerminalHere(_:)), #selector(openTerminalAtSelection(_:)),
+                 #selector(toggleFavorite(_:)), #selector(addToShelf(_:)), #selector(runAction(_:)), #selector(revealOriginal(_:)), #selector(showPackageContents(_:)),
+                 #selector(calculateFolderSize(_:)), #selector(calculateAllOnVolume(_:)), #selector(undo(_:)), #selector(redo(_:)),
+                 #selector(downloadNow(_:)), #selector(removeDownload(_:)), #selector(eject(_:)):
+                return false
+            default: break
+            }
+        }
+        if state.mtpLocation != nil {
+            switch item.action {
+            case #selector(performFind(_:)), #selector(showSearchField(_:)): return false
+            default: break
+            }
+        }
         switch item.action {
         case #selector(goBack(_:)): return state.canGoBack
         case #selector(goForward(_:)): return state.canGoForward
         case #selector(goUp(_:)): return state.canGoUp
-        case #selector(newFolder(_:)), #selector(newEmptyFile(_:)), #selector(newFileFromClipboard(_:)), #selector(newDocument(_:)):
-            return writable && (fs || state.deviceLocation != nil)
+        case #selector(newFolder(_:)):
+            return writable && (fs || state.isDevice)
+        case #selector(newEmptyFile(_:)), #selector(newFileFromClipboard(_:)), #selector(newDocument(_:)):
+            return writable && fs && localContext
         case #selector(newFolderWithSelection(_:)): return writable && fs && hasSel
         case #selector(openSelected(_:)), #selector(quickLook(_:)), #selector(copy(_:)), #selector(copyAsPath(_:)), #selector(addToShelf(_:)):
             return hasSel
-        case #selector(openInNewWindow(_:)), #selector(openInNewTab(_:)): return sel.contains { $0.isDirectory || $0.isArchive }
-        case #selector(moveToTrash(_:)), #selector(deletePermanently(_:)), #selector(cut(_:)), #selector(cutInternal(_:)):
+        case #selector(openInNewWindow(_:)), #selector(openInNewTab(_:)):
+            return sel.contains { $0.isDirectory || ($0.isLocalFile && $0.isArchive) }
+        case #selector(moveToTrash(_:)), #selector(deletePermanently(_:)):
+            if state.mtpLocation != nil || !mtpSelection.isEmpty { return canMutateMTPSelection }
             return hasSel && (fs || state.isArchive || state.isSearch || state.isSmart || state.deviceLocation != nil || state.isTrash)
+        case #selector(cut(_:)), #selector(cutInternal(_:)):
+            return hasSel && localContext
         case #selector(duplicate(_:)), #selector(touch(_:)), #selector(compress(_:)): return !realSelection.isEmpty
-        case #selector(renameSelected(_:)): return hasSel || fs
+        case #selector(renameSelected(_:)):
+            if state.mtpLocation != nil || !mtpSelection.isEmpty { return sel.count == 1 && canMutateMTPSelection }
+            return hasSel || fs
         case #selector(batchRename(_:)): return fs || !realSelection.isEmpty
         case #selector(paste(_:)), #selector(moveItemHere(_:)), #selector(pasteAsSymlinks(_:)), #selector(pasteAsAliases(_:)):
             return (writable || state.deviceLocation != nil) && !ops.clipboardURLs.isEmpty && (item.action == #selector(paste(_:)) || fs)
-        case #selector(pasteIntoFolder(_:)): return sel.count == 1 && sel[0].isDirectory && !ops.clipboardURLs.isEmpty
+        case #selector(pasteIntoFolder(_:)):
+            guard sel.count == 1, sel[0].isDirectory, !ops.clipboardURLs.isEmpty else { return false }
+            if let address = sel[0].mtpAddress { return MTPOps.canWrite(address) }
+            return sel[0].isLocalFile || state.isArchive
         case #selector(extract(_:)): return state.isArchive || sel.contains { $0.isArchive }
         case #selector(extractAll(_:)): return state.isArchive || sel.contains { $0.isArchive }
         case #selector(eject(_:)): return (sel.first?.isVolume ?? false) || state.location.url.map { Volumes.volume(containing: $0).map { !$0.isRoot && ($0.isEjectable || $0.isNetwork) } ?? false } ?? false
@@ -153,6 +188,7 @@ extension BrowserWindowController {
     }
 
     @objc func revealOriginal(_ sender: Any?) {
+        guard localContext else { return }
         guard let it = sel.first else { return }
         let target: URL?
         if it.isSymlink, let d = try? FileManager.default.destinationOfSymbolicLink(atPath: it.url.path) {
@@ -163,18 +199,22 @@ extension BrowserWindowController {
     }
 
     @objc func showPackageContents(_ sender: Any?) {
+        guard localContext else { return }
         guard let it = sel.first else { return }
         state.go(.directory(it.url))
     }
 
     @objc func goToContainingFolder(_ sender: Any?) {
+        guard localContext else { return }
         guard let u = sel.first?.url else { return }
         state.go(.directory(u.deletingLastPathComponent()), select: [u])
     }
     @objc func containingFolderNewWindow(_ sender: Any?) {
+        guard localContext else { return }
         for u in Set(selURLs.map { $0.deletingLastPathComponent() }) { AppDelegate.shared.openWindow(.directory(u)) }
     }
     @objc func containingFolderNewTab(_ sender: Any?) {
+        guard localContext else { return }
         for u in Set(selURLs.map { $0.deletingLastPathComponent() }) { AppDelegate.shared.openTab(.directory(u), from: self) }
     }
 
@@ -193,13 +233,18 @@ extension BrowserWindowController {
     @objc func newFolderWithSelection(_ sender: Any?) { createFolder(withSelection: true) }
 
     func createFolder(withSelection: Bool, inside: URL? = nil) {
-        if let (udid, path) = state.deviceLocation {
+        if let address = inside.flatMap(MTPAddress.init(url:)) ?? (inside == nil ? state.mtpLocation : nil) {
+            guard !withSelection else { return }
+            MTPOps.newFolder(in: address, state: state, window: window)
+            return
+        }
+        if inside == nil, let (udid, path) = state.deviceLocation {
             guard let name = Alerts.prompt("New Folder", message: "A new folder will be created.", defaultValue: "untitled folder", ok: "Create", selectStem: false) else { return }
             do { try IDeviceRegistry.shared.makeDirectory(udid: udid, path: (path as NSString).appendingPathComponent(name)); state.reload() }
             catch { Alerts.error("Error while creating a folder", error.localizedDescription, window: window) }
             return
         }
-        guard let dir = inside ?? state.currentDirectory else { return }
+        guard let dir = inside ?? state.currentDirectory, LocalFileBoundary.accepts(dir), !withSelection || localContext else { return }
         let suggested = FileNaming.uniqueURL(in: dir, name: withSelection ? "New Folder With Items" : "untitled folder", isDirectory: true).lastPathComponent
         let msg = String(format: "A new folder will be created inside “%@”", FileNaming.displayName(of: dir)) + (withSelection ? "\n\nThe selected items will be moved to the newly created folder." : "")
         guard let name = Alerts.prompt(withSelection ? "New Folder with Selection" : "New Folder", message: msg, defaultValue: suggested, ok: "Create", selectStem: false) else { return }
@@ -218,7 +263,7 @@ extension BrowserWindowController {
     }
 
     func createFile(_ t: DocumentTemplate) {
-        guard let dir = state.currentDirectory else { return }
+        guard let dir = state.currentDirectory, LocalFileBoundary.accepts(dir) else { return }
         let suggested = FileNaming.uniqueURL(in: dir, name: t.defaultName).lastPathComponent
         let msg = String(format: t == .text ? "A new empty file will be created inside “%@”" : "A new empty document will be created inside “%@”", FileNaming.displayName(of: dir))
         guard let name = Alerts.prompt(t == .text ? "New Empty File" : "New Empty Document", message: msg, defaultValue: suggested, ok: "Create") else { return }
@@ -228,7 +273,7 @@ extension BrowserWindowController {
     }
 
     @objc func newFileFromClipboard(_ sender: Any?) {
-        guard let dir = state.currentDirectory else { return }
+        guard let dir = state.currentDirectory, LocalFileBoundary.accepts(dir) else { return }
         guard let kind = FileOps.clipboardKind() else {
             Alerts.error("Error saving file", "The clipboard is empty or holds content that cannot be saved to a file.", window: window); return
         }
@@ -253,10 +298,23 @@ extension BrowserWindowController {
 
     // MARK: Edit
 
-    @objc func undo(_ sender: Any?) { ops.undo(window: window); state.softReload() }
-    @objc func redo(_ sender: Any?) { ops.redo(window: window); state.softReload() }
+    @objc func undo(_ sender: Any?) {
+        guard localContext else { return }
+        ops.undo(window: window)
+        state.softReload()
+    }
+    @objc func redo(_ sender: Any?) {
+        guard localContext else { return }
+        ops.redo(window: window)
+        state.softReload()
+    }
 
     @objc func copy(_ sender: Any?) {
+        if !mtpSelection.isEmpty {
+            guard mtpSelection.count == sel.count else { return }
+            MTPOps.copy(mtpSelection, window: window)
+            return
+        }
         if state.isArchive, let a = state.archive {
             // Extract to temp so the copy can be pasted anywhere.
             let paths = sel.compactMap(\.archivePath)
@@ -275,37 +333,52 @@ extension BrowserWindowController {
     }
     @objc func copyAsPath(_ sender: Any?) { ops.copyPaths(selURLs.isEmpty ? selOrCurrent : selURLs) }
     @objc func cut(_ sender: Any?) {
+        guard localContext else { return }
         if state.isArchive { archiveRemove(); return }
         ops.cut(realSelection, window: window)
         state.softReload()
     }
-    @objc func cutInternal(_ sender: Any?) { ops.cut(realSelection, window: window, forceInternal: true) }
+    @objc func cutInternal(_ sender: Any?) {
+        guard localContext else { return }
+        ops.cut(realSelection, window: window, forceInternal: true)
+    }
 
     @objc func paste(_ sender: Any?) {
+        if let address = state.mtpLocation {
+            MTPOps.upload(ops.clipboardURLs, to: address, state: state, window: window)
+            return
+        }
         if state.isArchive, let a = state.archive { ArchiveOps.add(ops.clipboardURLs, to: a, inner: state.archiveInner, state: state, window: window); return }
         if let (udid, path) = state.deviceLocation {
             let files = ops.clipboardURLs
             DeviceOps.upload(files, udid: udid, path: path, state: state, window: window)
             return
         }
-        guard let dir = state.currentDirectory else { return }
+        guard let dir = state.currentDirectory, LocalFileBoundary.accepts(dir) else { return }
         ops.paste(into: dir, window: window) { [weak self] urls in self?.state.select(urls: urls); self?.state.softReload() }
     }
     @objc func moveItemHere(_ sender: Any?) {
-        guard let dir = state.currentDirectory else { return }
+        guard localContext else { return }
+        guard let dir = state.currentDirectory, LocalFileBoundary.accepts(dir) else { return }
         ops.paste(into: dir, mode: .move, window: window) { [weak self] u in self?.state.select(urls: u) }
     }
     @objc func pasteIntoFolder(_ sender: Any?) {
-        guard let f = sel.first, f.isDirectory else { return }
+        guard let f = sel.first, sel.count == 1, f.isDirectory else { return }
+        if let address = f.mtpAddress {
+            MTPOps.upload(ops.clipboardURLs, to: address, state: state, window: window)
+            return
+        }
         if state.isArchive, let a = state.archive { ArchiveOps.add(ops.clipboardURLs, to: a, inner: f.archivePath ?? "", state: state, window: window); return }
         ops.paste(into: f.url, window: window)
     }
     @objc func pasteAsSymlinks(_ sender: Any?) {
-        guard let dir = state.currentDirectory else { return }
+        guard localContext else { return }
+        guard let dir = state.currentDirectory, LocalFileBoundary.accepts(dir) else { return }
         ops.paste(into: dir, mode: .symlinks, window: window) { [weak self] u in self?.state.select(urls: u) }
     }
     @objc func pasteAsAliases(_ sender: Any?) {
-        guard let dir = state.currentDirectory else { return }
+        guard localContext else { return }
+        guard let dir = state.currentDirectory, LocalFileBoundary.accepts(dir) else { return }
         ops.paste(into: dir, mode: .aliases, window: window) { [weak self] u in self?.state.select(urls: u) }
     }
 
@@ -316,6 +389,11 @@ extension BrowserWindowController {
 
     @objc func moveToTrash(_ sender: Any?) {
         guard !sel.isEmpty else { return }
+        if state.mtpLocation != nil || !mtpSelection.isEmpty {
+            guard canMutateMTPSelection else { return }
+            MTPOps.remove(mtpSelection, state: state, window: window)
+            return
+        }
         if state.isArchive { archiveRemove(); return }
         if let (udid, _) = state.deviceLocation {
             let paths = sel.compactMap { IDeviceRegistry.parseVirtual($0.url)?.1 }
@@ -330,6 +408,10 @@ extension BrowserWindowController {
     }
 
     @objc func deletePermanently(_ sender: Any?) {
+        if state.isDevice || !mtpSelection.isEmpty {
+            moveToTrash(sender)
+            return
+        }
         if state.isArchive { archiveRemove(); return }
         ops.deletePermanently(realSelection, window: window)
     }
@@ -348,6 +430,7 @@ extension BrowserWindowController {
     }
 
     @objc func eject(_ sender: Any?) {
+        guard localContext else { return }
         if let v = sel.first, v.isVolume { VolumeOps.eject(v.url, window: window); return }
         if let u = state.location.url, let v = Volumes.volume(containing: u) {
             state.go(.directory(state.prefs.homeURL))
@@ -358,41 +441,59 @@ extension BrowserWindowController {
     // MARK: Rename / duplicate / touch
 
     @objc func renameSelected(_ sender: Any?) {
+        if state.mtpLocation != nil || !mtpSelection.isEmpty {
+            guard sel.count == 1, canMutateMTPSelection else { return }
+            renameViaPrompt(sel[0].url)
+            return
+        }
         if sel.count == 1 { fileView.beginRename(sel[0].url) } else { batchRename(sender) }
     }
 
     @objc func batchRename(_ sender: Any?) {
-        let targets = realSelection.isEmpty ? state.items.filter { $0.archivePath == nil }.map(\.url) : realSelection
+        guard localContext else { return }
+        let targets = realSelection.isEmpty ? state.items.filter(\.isLocalFile).map(\.url) : realSelection
         guard !targets.isEmpty else { return }
         BatchRenameWindow.show(urls: targets, host: self)
     }
 
     @objc func duplicate(_ sender: Any?) {
+        guard localContext else { return }
         ops.start(.duplicate, realSelection, to: nil, window: window) { [weak self] op in self?.state.select(urls: op.results) }
     }
 
-    @objc func touch(_ sender: Any?) { ops.touch(realSelection); state.softReload() }
+    @objc func touch(_ sender: Any?) {
+        guard localContext else { return }
+        ops.touch(realSelection)
+        state.softReload()
+    }
 
     // MARK: Archives
 
     @objc func compress(_ sender: Any?) {
+        guard localContext else { return }
         let fmt = ArchiveFormat(rawValue: state.prefs.lastCompressFormat) ?? .zip
         ArchiveOps.compress(realSelection, format: fmt, protected: false, state: state, window: window)
     }
     @objc func compressTo(_ sender: NSMenuItem) {
+        guard localContext else { return }
         guard let raw = sender.representedObject as? String, let fmt = ArchiveFormat(rawValue: raw) else { return }
         state.prefs.lastCompressFormat = fmt.rawValue
         ArchiveOps.compress(realSelection, format: fmt, protected: sender.tag == 1, state: state, window: window)
     }
     @objc func extract(_ sender: Any?) {
+        guard localContext else { return }
         if state.isArchive { ArchiveOps.extractEntries(sel.compactMap(\.archivePath), state: state, window: window) }
         else { ArchiveOps.extractHere(sel.filter(\.isArchive).map(\.url), state: state, window: window) }
     }
     @objc func extractAll(_ sender: Any?) {
+        guard localContext else { return }
         if state.isArchive { ArchiveOps.extractEntries([], state: state, window: window) }
         else { ArchiveOps.extractHere(sel.filter(\.isArchive).map(\.url), state: state, window: window) }
     }
-    @objc func extractHere(_ sender: Any?) { ArchiveOps.extractHere(sel.filter(\.isArchive).map(\.url), state: state, window: window) }
+    @objc func extractHere(_ sender: Any?) {
+        guard localContext else { return }
+        ArchiveOps.extractHere(sel.filter(\.isArchive).map(\.url), state: state, window: window)
+    }
     @objc func setArchiveEncoding(_ sender: NSMenuItem) {
         state.archive?.filenameEncoding = sender.representedObject as? String
         try? state.archive?.load()
@@ -408,16 +509,22 @@ extension BrowserWindowController {
 
     @objc func quickLook(_ sender: Any?) {
         guard let panel = QLPreviewPanel.shared() else { return }
-        if panel.isVisible { panel.orderOut(nil) } else { updateQuickLook(); panel.makeKeyAndOrderFront(nil) }
+        if panel.isVisible { panel.orderOut(nil) }
+        else {
+            updateQuickLook(stageRemote: true)
+            panel.makeKeyAndOrderFront(nil)
+        }
     }
 
     @objc func showInfoInFinder(_ sender: Any?) {
+        guard localContext else { return }
         for u in selOrCurrent {
             _ = ActionRunner.runAppleScript("tell application \"Finder\"\nactivate\nopen information window of (POSIX file \(ActionRunner.appleScriptQuote(u.path)) as alias)\nend tell")
         }
     }
 
     @objc func calculateFolderSize(_ sender: Any?) {
+        guard localContext else { return }
         let folders = sel.filter(\.isFolder).map(\.url)
         state.calculateSizes(folders.isEmpty ? state.items.filter(\.isFolder).map(\.url) : folders)
     }
@@ -427,9 +534,11 @@ extension BrowserWindowController {
     // MARK: Cloud
 
     @objc func downloadNow(_ sender: Any?) {
+        guard localContext else { return }
         for it in sel where it.cloud == .notDownloaded { try? FileManager.default.startDownloadingUbiquitousItem(at: it.url) }
     }
     @objc func removeDownload(_ sender: Any?) {
+        guard localContext else { return }
         for it in sel where it.cloud == .current { try? FileManager.default.evictUbiquitousItem(at: it.url) }
         state.softReload()
     }
@@ -437,18 +546,21 @@ extension BrowserWindowController {
     // MARK: Tags & ratings
 
     @objc func toggleColorTag(_ sender: NSMenuItem) {
+        guard localContext else { return }
         guard let c = FinderColor(rawValue: sender.tag) else { return }
         let urls = realSelection
         ops.recordMetadataChange("Change Color Tag", urls: urls) { try Metadata.toggleColor(c, on: urls) }
         state.softReload(); info.refresh()
     }
     @objc func toggleTextTag(_ sender: NSMenuItem) {
+        guard localContext else { return }
         guard let t = sender.representedObject as? String else { return }
         let urls = realSelection
         ops.recordMetadataChange("Change Text Tag", urls: urls) { try Metadata.toggleTextTag(t, on: urls) }
         state.softReload(); info.refresh()
     }
     @objc func addTextTag(_ sender: Any?) {
+        guard localContext else { return }
         guard let t = Alerts.prompt("Add a New Text Tag", message: "Enter a new tag: ", ok: "Add", selectStem: false), !t.isEmpty else { return }
         let urls = realSelection
         ops.recordMetadataChange("Change Text Tag", urls: urls) {
@@ -457,6 +569,7 @@ extension BrowserWindowController {
         state.softReload(); info.refresh()
     }
     @objc func setRating(_ sender: NSMenuItem) {
+        guard localContext else { return }
         let r = sender.tag
         let urls = realSelection
         ops.recordMetadataChange("Change Star Rating", urls: urls) { for u in urls { try Metadata.setStarRating(u, r) } }
@@ -466,14 +579,19 @@ extension BrowserWindowController {
     // MARK: Favorites, default & home folders
 
     @objc func toggleFavorite(_ sender: Any?) {
+        guard localContext else { return }
         let targets = sel.isEmpty ? (state.currentDirectory.map { [$0] } ?? []) : selURLs
         let allFav = targets.allSatisfy(Favorites.contains)
         for u in targets { if allFav { try? Favorites.remove(u) } else { try? Favorites.add(u) } }
         tree.rebuild()
     }
 
-    func makeDefaultFolder(_ u: URL) { state.prefs.defaultPath = u.path }
+    func makeDefaultFolder(_ u: URL) {
+        guard LocalFileBoundary.accepts(u) else { return }
+        state.prefs.defaultPath = u.path
+    }
     func makeHomeFolder(_ u: URL) {
+        guard LocalFileBoundary.accepts(u) else { return }
         state.prefs.homePath = u.path
         if Alerts.confirm("Changing Home folder requires Explorer to be relaunched to take effect.", "Do you want to relaunch now?", ok: "Relaunch Now") {
             AppDelegate.shared.relaunch()
@@ -482,12 +600,20 @@ extension BrowserWindowController {
 
     // MARK: Finder & Terminal
 
-    @objc func revealInFinder(_ sender: Any?) { NSWorkspace.shared.activateFileViewerSelecting(realSelection.isEmpty ? selOrCurrent : realSelection) }
+    @objc func revealInFinder(_ sender: Any?) {
+        guard localContext else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(realSelection.isEmpty ? selOrCurrent : realSelection)
+    }
     @objc func openInFinder(_ sender: Any?) {
+        guard localContext else { return }
         if let d = state.currentDirectory { NSWorkspace.shared.open(d) }
     }
-    @objc func openTerminalHere(_ sender: Any?) { if let d = state.currentDirectory { Terminal.open(d) } }
+    @objc func openTerminalHere(_ sender: Any?) {
+        guard localContext else { return }
+        if let directory = state.currentDirectory { Terminal.open(directory) }
+    }
     @objc func openTerminalAtSelection(_ sender: Any?) {
+        guard localContext else { return }
         let dirs = sel.map { $0.isDirectory ? $0.url : $0.url.deletingLastPathComponent() }
         for d in Set(dirs) { Terminal.open(d) }
     }
@@ -540,6 +666,7 @@ extension BrowserWindowController {
     // MARK: Shelf
 
     @objc func addToShelf(_ sender: Any?) {
+        guard localContext else { return }
         ShelfStore.add(realSelection)
         if !state.prefs.showShelf { state.prefs.showShelf = true; broadcastChrome() }
         shelf.open()
@@ -561,6 +688,7 @@ extension BrowserWindowController {
 
     /// Replaces the round search button with the search field and focuses it; it collapses back when emptied.
     @objc func showSearchField(_ sender: Any?) {
+        guard state.mtpLocation == nil else { return }
         guard let tb = window?.toolbar else { return }
         if let idx = tb.items.firstIndex(where: { $0.itemIdentifier.rawValue == "searchButton" }) {
             tb.removeItem(at: idx)
@@ -618,6 +746,7 @@ extension BrowserWindowController {
     // MARK: Actions (scripting)
 
     @objc func runAction(_ sender: NSMenuItem) {
+        guard localContext else { return }
         guard let a = sender.representedObject as? ScriptAction, let dir = state.currentDirectory else { return }
         let items = realSelection
         let scripts = ActionRunner.scripts(for: a, items: items, dir: dir)
@@ -646,6 +775,7 @@ extension URL {
 
 enum Terminal {
     static func open(_ dir: URL) {
+        guard LocalFileBoundary.accepts(dir) else { return }
         let app = URL(fileURLWithPath: Preferences.shared.terminalAppPath)
         let cfg = NSWorkspace.OpenConfiguration()
         if FileManager.default.fileExists(atPath: app.path) {

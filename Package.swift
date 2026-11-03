@@ -15,10 +15,11 @@ let package = Package(
     targets: [
         // Declarations for the system libarchive (/usr/lib/libarchive.2.dylib); the SDK ships no headers.
         .target(name: "CArchive", path: "Sources/CArchive", linkerSettings: [.linkedLibrary("archive")]),
+        .target(name: "CMTP", path: "Sources/CMTP"),
         .target(name: "ExplorerHelperProtocol", path: "Sources/ExplorerHelperProtocol"),
         .target(
             name: "ExplorerKit",
-            dependencies: ["CArchive", "ExplorerHelperProtocol", .product(name: "PLzmaSDK", package: "PLzmaSDK")],
+            dependencies: ["CArchive", "CMTP", "ExplorerHelperProtocol", .product(name: "PLzmaSDK", package: "PLzmaSDK")],
             path: "Sources/ExplorerKit",
             linkerSettings: [.linkedFramework("CoreServices"), .linkedFramework("NetFS")]
         ),

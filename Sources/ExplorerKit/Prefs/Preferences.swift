@@ -58,6 +58,7 @@ public struct SidebarSection: Codable, Hashable, Identifiable, Sendable {
         .init(id: "icloud", label: "iCloud Drive folder", colorIndex: 0, icon: "icloud", disabled: false, expandedByDefault: false),
         .init(id: "cs", label: "Cloud storage", colorIndex: 0, icon: "globe.americas", disabled: false, expandedByDefault: false),
         .init(id: "idevice", label: "iOS Devices", colorIndex: 0, icon: "iphone", disabled: false, expandedByDefault: true),
+        .init(id: "mtp", label: "MTP Devices", colorIndex: 0, icon: "externaldrive.connected.to.line.below", disabled: false, expandedByDefault: false),
         .init(id: "recent", label: "Recent files", colorIndex: 0, icon: "clock", disabled: false, expandedByDefault: false),
         .init(id: "tags", label: "Tags", colorIndex: 0, icon: "circlebadge.2", disabled: false, expandedByDefault: false),
         .init(id: "ratings", label: "Star ratings", colorIndex: 0, icon: "star.circle", disabled: false, expandedByDefault: false),

@@ -28,6 +28,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     weak var searchItem: NSSearchToolbarItem?
     weak var viewOptionsControl: ViewOptionsControl?
     private var qlItems: [URL] = []
+    private var qlRequest: [String] = []
 
     static var all: [BrowserWindowController] = []
 
@@ -233,6 +234,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         statusBar.refresh()
         info.refresh()
         window?.toolbar?.validateVisibleItems()
+        searchField?.isEnabled = state.mtpLocation == nil
+        searchItem?.searchField.isEnabled = state.mtpLocation == nil
         searchField?.placeholderString = "Search " + (state.currentDirectory.map { FileNaming.displayName(of: $0) } ?? "")
     }
 
@@ -392,6 +395,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         case TB.search:
             let i = NSSearchToolbarItem(itemIdentifier: id)
             i.searchField.delegate = self
+            i.searchField.isEnabled = state.mtpLocation == nil
             i.searchField.sendsWholeSearchString = true
             i.searchField.target = self
             i.searchField.action = #selector(searchSubmitted(_:))
@@ -419,6 +423,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         case TB.forward: return state.canGoForward
         case TB.up: return state.canGoUp
         case TB.newFolder: return state.canWrite && !state.isArchive
+        case TB.searchButton, TB.search: return state.mtpLocation == nil
+        case TB.terminal, TB.finder: return !state.isDevice && state.currentDirectory.map(LocalFileBoundary.accepts) == true
         case TB.remember:
             item.image = NSImage(systemSymbolName: state.isRemembered ? "bookmark.fill" : "bookmark", accessibilityDescription: nil)
             return state.location.isFileSystem
@@ -428,7 +434,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     @objc func viewPicked(_ sender: NSSegmentedControl) { state.options.view = ViewKind.allCases[sender.selectedSegment] }
 
-    @objc private func searchSubmitted(_ sender: NSSearchField) { state.search(sender.stringValue) }
+    @objc private func searchSubmitted(_ sender: NSSearchField) {
+        guard state.mtpLocation == nil else { return }
+        state.search(sender.stringValue)
+    }
 
     func controlTextDidChange(_ obj: Notification) {
         guard let f = obj.object as? NSSearchField, f === searchField else { return }
@@ -437,7 +446,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         perform(#selector(liveSearch), with: nil, afterDelay: 0.35)
     }
 
-    @objc private func liveSearch() { if let t = searchField?.stringValue { state.search(t) } }
+    @objc private func liveSearch() {
+        guard state.mtpLocation == nil else { return }
+        if let t = searchField?.stringValue { state.search(t) }
+    }
 
     func controlTextDidEndEditing(_ obj: Notification) {
         guard let f = obj.object as? NSSearchField, f === searchField else { return }
@@ -452,6 +464,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         var files: [FileItem] = []
         var folders: [FileItem] = []
         for it in items {
+            if it.mtpAddress != nil || IDeviceRegistry.parseVirtual(it.url) != nil {
+                if it.isDirectory { folders.append(it) } else { files.append(it) }
+                continue
+            }
+            guard LocalFileBoundary.accepts(it.url) else { continue }
             if it.archivePath != nil && !it.isDirectory { files.append(it) }
             else if it.isFolder || (it.isSymlink && it.isDirectory) || it.isArchive && state.prefs.openArchives == .within || (it.archivePath != nil && it.isDirectory) || it.isAlias && aliasIsFolder(it.url) {
                 folders.append(it)
@@ -459,11 +476,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         }
         if newWindow || newTab {
             for f in folders {
-                let loc: Location = f.isArchive ? .archive(f.url, inner: "") : .directory(f.url.resolvingSymlinksInPath())
+                let loc: Location
+                if let address = f.mtpAddress { loc = .mtp(address) }
+                else if let (udid, path) = IDeviceRegistry.parseVirtual(f.url) { loc = .device(udid: udid, path: path) }
+                else { loc = f.isArchive ? .archive(f.url, inner: "") : .directory(f.url.resolvingSymlinksInPath()) }
                 if newTab { AppDelegate.shared.openTab(loc, from: self) } else { AppDelegate.shared.openWindow(loc) }
             }
         } else if let f = folders.first {
-            _ = state.navigateInto(f)
+            if let address = f.mtpAddress { state.go(.mtp(address)) }
+            else { _ = state.navigateInto(f) }
         }
         openFiles(files)
     }
@@ -474,13 +495,22 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     func openFiles(_ files: [FileItem], with app: URL? = nil) {
         guard !files.isEmpty else { return }
+        let remote = files.compactMap(\.mtpAddress)
+        if !remote.isEmpty {
+            MTPOps.stage(remote, window: window) { urls in
+                let configuration = NSWorkspace.OpenConfiguration()
+                if let app { NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: configuration) }
+                else { urls.forEach { NSWorkspace.shared.open($0) } }
+            }
+        }
         var urls: [URL] = []
         for f in files {
+            if f.mtpAddress != nil { continue }
             if let inner = f.archivePath, let a = state.archive {
                 if let tmp = try? a.extractToTemp([inner]) { urls.append(tmp.appendingPathComponent(inner)) }
             } else if let (udid, path) = IDeviceRegistry.parseVirtual(f.url) {
                 if let out = try? IDeviceRegistry.shared.download(udid: udid, paths: [path], to: AppPaths.temp) { urls += out }
-            } else { urls.append(f.url) }
+            } else if f.isLocalFile { urls.append(f.url) }
         }
         let cfg = NSWorkspace.OpenConfiguration()
         if let app {
@@ -527,10 +557,32 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     // MARK: Quick Look
 
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
-    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) { panel.dataSource = self; panel.delegate = self; updateQuickLook() }
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = self
+        panel.delegate = self
+        updateQuickLook(stageRemote: true)
+    }
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) { panel.dataSource = nil; panel.delegate = nil }
 
-    func updateQuickLook() {
+    func updateQuickLook(stageRemote: Bool = false) {
+        let addresses = state.selection.compactMap(\.mtpAddress)
+        if !addresses.isEmpty {
+            let request = addresses.map(\.id)
+            guard request != qlRequest else { return }
+            qlItems = []
+            if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible { QLPreviewPanel.shared().reloadData() }
+            guard stageRemote || (QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible) else { return }
+            qlRequest = request
+            MTPOps.stage(addresses, window: window, onFailure: { [weak self] in
+                if self?.qlRequest == request { self?.qlRequest = [] }
+            }) { [weak self] urls in
+                guard let self, self.qlRequest == request, self.state.selection.compactMap(\.mtpAddress).map(\.id) == request else { return }
+                self.qlItems = urls
+                if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible { QLPreviewPanel.shared().reloadData() }
+            }
+            return
+        }
+        qlRequest = []
         qlItems = state.selection.compactMap { it in
             if let inner = it.archivePath, let a = state.archive {
                 return (try? a.extractToTemp([inner]))?.appendingPathComponent(inner)
@@ -538,7 +590,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             if let (udid, path) = IDeviceRegistry.parseVirtual(it.url) {
                 return (try? IDeviceRegistry.shared.download(udid: udid, paths: [path], to: AppPaths.temp))?.first
             }
-            return it.url
+            return it.isLocalFile ? it.url : nil
         }
         if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible { QLPreviewPanel.shared().reloadData() }
     }
@@ -546,6 +598,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     // MARK: Rename
 
     func commitRename(_ url: URL, to name: String) {
+        if let address = MTPAddress(url: url) {
+            MTPOps.rename(address, to: name, state: state, window: window)
+            return
+        }
         if let inner = state.selection.first(where: { $0.url == url })?.archivePath {
             Alerts.error("Error while renaming", "Entries inside archives cannot be renamed.", window: window); _ = inner
             return
@@ -565,7 +621,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     func renameViaPrompt(_ url: URL) {
-        if let n = Alerts.prompt("Rename", message: "Enter a new name for “\(url.lastPathComponent)”:", defaultValue: url.lastPathComponent, ok: "Rename") {
+        let address = MTPAddress(url: url)
+        if let address, !MTPOps.canMutate(address) { return }
+        let name = address?.title ?? url.lastPathComponent
+        if let n = Alerts.prompt("Rename", message: "Enter a new name for “\(name)”:", defaultValue: name, ok: "Rename") {
             commitRename(url, to: n)
         }
     }

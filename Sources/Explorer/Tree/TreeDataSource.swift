@@ -25,7 +25,7 @@ enum TreeBuilder {
                 // The home folder itself is the top-level row; children load lazily.
                 let n = TreeNode(.folder(prefs.homeURL), title: "Home", symbol: "house")
                 out.append(top(n, s))
-            case "hd", "ed", "nd", "idevice":
+            case "hd", "ed", "nd", "idevice", "mtp":
                 // Every drive / share / device is its own top-level row (eject buttons where applicable).
                 for d in children(ofSection: s.id, network: network) { out.append(top(d, s)) }
             case "icloud":
@@ -117,6 +117,12 @@ enum TreeBuilder {
             }
         case "idevice":
             return IDeviceRegistry.shared.treeNodes()
+        case "mtp":
+            return MTPService.shared.devices.map { device in
+                let node = TreeNode(.mtp(device.address), title: device.name, symbol: "externaldrive.connected.to.line.below")
+                node.loadError = device.errorMessage
+                return node
+            }
         case "recent":
             let n = TreeNode(.smart(.recent(days: prefs.recentDays)), title: "Recent Files", symbol: "clock")
             return [n]

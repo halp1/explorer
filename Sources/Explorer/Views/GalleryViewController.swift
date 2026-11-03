@@ -105,7 +105,7 @@ final class GalleryViewController: NSViewController, FileViewing, NSCollectionVi
 
     // Image edits (also used by the Info panel)
     func transform(_ t: ImageTransform) {
-        guard let it = state.selection.first, it.isImage, it.archivePath == nil else { return }
+        guard let it = state.selection.first, it.isImage, it.isLocalFile else { return }
         do {
             try ImageEditor.apply(t, to: it.url)
             ThumbnailStore.shared.clearCache()
@@ -132,7 +132,7 @@ final class GalleryThumb: NSCollectionViewItem {
     func configure(_ it: FileItem, state: BrowserState) {
         rid = it.id
         imageView?.image = ThumbnailStore.icon(for: it, size: 64)
-        if state.options.showThumbnails, it.archivePath == nil {
+        if state.options.showThumbnails, it.isLocalFile {
             let id = it.id
             ThumbnailStore.shared.thumbnail(for: it, size: 64, scale: 2, folderStyle: Preferences.shared.folderThumbnails) { [weak self] img in
                 if self?.rid == id { self?.imageView?.image = img }
@@ -190,6 +190,14 @@ final class ZoomablePreview: NSView {
         player?.removeFromSuperview(); player?.player?.pause(); player = nil
         overlay?.removeFromSuperview(); overlay = nil
 
+        if !item.isLocalFile && item.archivePath == nil {
+            scroll.isHidden = false
+            let icon = ThumbnailStore.icon(for: item, size: 128)
+            imageView.image = icon
+            imageView.frame = NSRect(origin: .zero, size: icon.size)
+            if !lockZoom { fit() }
+            return
+        }
         var fileURL = item.url
         if let inner = item.archivePath, let a = state.archive {
             guard !item.isDirectory, let tmp = try? a.extractToTemp([inner]) else { clear(); return }
@@ -288,6 +296,7 @@ enum ImageTransform { case rotateCW, rotateCCW, flipH, flipV }
 /// Lossless-ish image rewrite via ImageIO: applies the transform to pixels and keeps metadata.
 enum ImageEditor {
     static func apply(_ t: ImageTransform, to url: URL) throws {
+        try LocalFileBoundary.require([url])
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil), let type = CGImageSourceGetType(src),
               let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { throw OpError.message("Not an Image") }
         var props = (CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]) ?? [:]

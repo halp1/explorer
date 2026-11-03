@@ -299,6 +299,7 @@ struct SidebarSettings: View {
                         Text(s.label)
                         if s.id == "trash" { Text("(requires Full Disk Access)").font(.caption).foregroundColor(.secondary) }
                         if s.id == "idevice" && !IDeviceRegistry.shared.isAvailable { Text("(install libimobiledevice)").font(.caption).foregroundColor(.secondary) }
+                        if s.id == "mtp" && !MTPService.shared.isAvailable { Text("brew install libmtp").font(.caption).foregroundColor(.secondary).textSelection(.enabled) }
                     }
                 }
                 .onMove { from, to in sections.move(fromOffsets: from, toOffset: to); save() }

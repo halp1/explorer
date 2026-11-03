@@ -17,12 +17,28 @@ final class FileOps: ObservableObject {
 
     var trasher: Trasher { Trasher(allowPrivateTrash: prefs.usePrivateTrash) }
 
+    @discardableResult
+    private func admit(_ urls: [URL], window: NSWindow?) -> Bool {
+        do { try LocalFileBoundary.require(urls) }
+        catch {
+            Alerts.error("Local File Operation Unavailable", error.localizedDescription, window: window)
+            return false
+        }
+        return true
+    }
+
     // MARK: Generic runner
 
     @discardableResult
     func start(_ kind: FileOperationKind, _ sources: [URL], to dest: URL?, window: NSWindow?, title: String? = nil,
                completion: ((FileOperation) -> Void)? = nil) -> FileOperation {
         let op = FileOperation(kind: kind, sources: sources, destination: dest)
+        guard admit(sources + (dest.map { [$0] } ?? []), window: window) else {
+            // Keep the returned operation observable, but its own boundary will fail before work.
+            op.onFinish = completion
+            op.start()
+            return op
+        }
         op.trasher = trasher
         op.resolver = { [weak window] c in ConflictPrompt.ask(c, window: window) }
         op.errorHandler = { [weak self, weak window] e, u in self?.askContinue(after: e, item: u, kind: kind, window: window) ?? false }
@@ -107,7 +123,7 @@ final class FileOps: ObservableObject {
     // MARK: Trash / Delete
 
     func moveToTrash(_ urls: [URL], window: NSWindow?) {
-        guard !urls.isEmpty else { return }
+        guard !urls.isEmpty, admit(urls, window: window) else { return }
         // Items that cannot go to the system Trash and private trash is disabled → offer permanent delete.
         if !prefs.usePrivateTrash {
             let unsupported = urls.filter { !Self.volumeSupportsTrash($0) }
@@ -129,7 +145,7 @@ final class FileOps: ObservableObject {
     }
 
     func deletePermanently(_ urls: [URL], window: NSWindow?) {
-        guard !urls.isEmpty else { return }
+        guard !urls.isEmpty, admit(urls, window: window) else { return }
         let a = NSAlert()
         a.messageText = urls.count == 1 ? String(format: "Permanently Delete “%@”?", urls[0].lastPathComponent) : "Are you sure you want to delete the selected items permanently?"
         a.informativeText = "This action is immediate and cannot be undone."
@@ -154,6 +170,7 @@ final class FileOps: ObservableObject {
     // MARK: Clipboard
 
     func copy(_ urls: [URL]) {
+        guard urls.allSatisfy(LocalFileBoundary.accepts) else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.writeObjects(urls as [NSURL])
@@ -164,12 +181,12 @@ final class FileOps: ObservableObject {
     func copyPaths(_ urls: [URL]) {
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
+        pb.setString(urls.map { LocalFileBoundary.accepts($0) ? $0.path : $0.absoluteString }.joined(separator: "\n"), forType: .string)
     }
 
     /// Cut: per settings, either move to Trash now (works with other apps) or remember for an internal move.
     func cut(_ urls: [URL], window: NSWindow?, forceInternal: Bool = false) {
-        guard !urls.isEmpty else { return }
+        guard !urls.isEmpty, admit(urls, window: window) else { return }
         let cloud = urls.contains(where: Volumes.isInCloudStorage)
         if forceInternal || !prefs.cutViaTrash || (cloud && prefs.internalCutForCloud) {
             copy(urls)
@@ -187,7 +204,7 @@ final class FileOps: ObservableObject {
     }
 
     var clipboardURLs: [URL] {
-        (NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        ((NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []).filter(LocalFileBoundary.accepts)
     }
 
     var canPaste: Bool { !clipboardURLs.isEmpty || NSPasteboard.general.canReadItem(withDataConformingToTypes: [UTType.image.identifier, UTType.plainText.identifier]) }
@@ -203,7 +220,7 @@ final class FileOps: ObservableObject {
 
     func paste(into dest: URL, mode: PasteMode = .auto, window: NSWindow?, completion: (([URL]) -> Void)? = nil) {
         let urls = clipboardURLs
-        guard !urls.isEmpty else { return }
+        guard !urls.isEmpty, admit(urls + [dest], window: window) else { return }
         let done: (FileOperation) -> Void = { op in completion?(op.results) }
         switch mode {
         case .symlinks: start(.link, urls, to: dest, window: window, completion: done)
@@ -239,6 +256,7 @@ final class FileOps: ObservableObject {
     // MARK: Create
 
     func newFolder(in dir: URL, name: String, moving selection: [URL] = [], window: NSWindow?) -> URL? {
+        guard admit([dir] + selection, window: window), FileNaming.validate(name) == nil else { return nil }
         let u = dir.appendingPathComponent(name, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: u, withIntermediateDirectories: false)
@@ -259,6 +277,7 @@ final class FileOps: ObservableObject {
     }
 
     func newFile(in dir: URL, name: String, template: DocumentTemplate, window: NSWindow?) -> URL? {
+        guard admit([dir], window: window), FileNaming.validate(name) == nil else { return nil }
         let u = dir.appendingPathComponent(name)
         if FileManager.default.fileExists(atPath: u.path) {
             Alerts.error("Error saving file", String(format: "Could not create an empty file “%@” because a file with such name already exists.", name), window: window)
@@ -273,6 +292,7 @@ final class FileOps: ObservableObject {
 
     /// Creates a file from the clipboard: text → .txt, RTF → .rtf, image → chosen format, URL → .webloc.
     func newFileFromClipboard(in dir: URL, name: String, imageType: UTType?, window: NSWindow?) -> URL? {
+        guard admit([dir], window: window), FileNaming.validate(name) == nil else { return nil }
         let pb = NSPasteboard.general
         let u = dir.appendingPathComponent(name)
         if FileManager.default.fileExists(atPath: u.path) {
@@ -323,6 +343,7 @@ final class FileOps: ObservableObject {
 
     @discardableResult
     func rename(_ url: URL, to name: String, window: NSWindow?) -> URL? {
+        guard admit([url], window: window) else { return nil }
         if let err = FileNaming.validate(name) {
             Alerts.error("Error while renaming", name.trimmingCharacters(in: .whitespaces).isEmpty ? String(format: "Unable to rename “%@”: The new name cannot be empty.", url.lastPathComponent) : err, window: window)
             return nil
@@ -349,6 +370,7 @@ final class FileOps: ObservableObject {
     // MARK: Misc
 
     func touch(_ urls: [URL]) {
+        guard urls.allSatisfy(LocalFileBoundary.accepts) else { return }
         var old: [(URL, Date?)] = []
         for u in urls {
             old.append((u, try? u.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate))
@@ -369,6 +391,7 @@ final class FileOps: ObservableObject {
     }
 
     func recordMetadataChange(_ title: String, urls: [URL], apply: @escaping () throws -> Void) {
+        guard !urls.isEmpty, urls.allSatisfy(LocalFileBoundary.accepts) else { return }
         let snapshot = urls.map { ($0, Metadata.tags($0), Metadata.starRating($0)) }
         do { try apply() } catch { NSSound.beep(); return }
         history.record(title, Self.restoreMetadata(snapshot))

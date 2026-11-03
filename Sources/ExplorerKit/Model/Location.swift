@@ -10,6 +10,8 @@ public enum Location: Hashable, Codable, Sendable {
     case trash
     /// A folder on a connected iOS device's AFC filesystem.
     case device(udid: String, path: String)
+    /// An object-ID based location in a USB MTP connection session.
+    case mtp(MTPAddress)
 
     public var url: URL? {
         switch self {
@@ -35,6 +37,7 @@ public enum Location: Hashable, Codable, Sendable {
         case .smart(let n): return n.title
         case .trash: return "Trash"
         case .device(_, let p): return p == "/" ? "iOS Device" : (p as NSString).lastPathComponent
+        case .mtp(let address): return address.title
         }
     }
 
@@ -49,6 +52,7 @@ public enum Location: Hashable, Codable, Sendable {
             let up = (trimmed as NSString).deletingLastPathComponent
             return .archive(u, inner: up.isEmpty ? "" : up + "/")
         case .search(let s): return .directory(s.scope)
+        case .mtp(let address): return address.parent.map { .mtp($0) }
         case .device(let id, let p):
             guard p != "/" else { return nil }
             let up = (p as NSString).deletingLastPathComponent

@@ -157,6 +157,7 @@ enum Menus {
 
     static func shareMenu(_ urls: [URL]) -> NSMenu {
         let m = NSMenu(title: "Share")
+        guard urls.allSatisfy(LocalFileBoundary.accepts) else { return m }
         for s in NSSharingService.sharingServices(forItems: urls) {
             let i = NSMenuItem(title: s.menuItemTitle, action: #selector(ShareTarget.share(_:)), keyEquivalent: "")
             i.image = s.image
@@ -171,7 +172,7 @@ enum Menus {
 final class ShareTarget: NSObject {
     static let shared = ShareTarget()
     @objc func share(_ sender: NSMenuItem) {
-        guard let (s, urls) = sender.representedObject as? (NSSharingService, [URL]) else { return }
+        guard let (s, urls) = sender.representedObject as? (NSSharingService, [URL]), urls.allSatisfy(LocalFileBoundary.accepts) else { return }
         s.perform(withItems: urls)
     }
 }
@@ -191,7 +192,7 @@ final class TagDotsView: NSView {
             let p = NSBezierPath(ovalIn: r)
             ItemStyle.labelColor(c.rawValue)?.setFill()
             p.fill()
-            let have = !selection.isEmpty && selection.allSatisfy { $0.labelNumber == c.rawValue || $0.tags.contains(c.name) || Metadata.tags($0.url).contains(c.name) }
+            let have = !selection.isEmpty && selection.allSatisfy { $0.labelNumber == c.rawValue || $0.tags.contains(c.name) || ($0.isLocalFile && Metadata.tags($0.url).contains(c.name)) }
             if have {
                 NSColor.white.setStroke()
                 let check = NSBezierPath()
@@ -231,8 +232,26 @@ extension BrowserWindowController {
         let fs = state.location.isFileSystem
         let hasFolderSel = selection.contains { $0.isDirectory }
         let clip = !FileOps.shared.clipboardURLs.isEmpty
+        let remote = state.isDevice || selection.contains { !$0.isLocalFile && $0.archivePath == nil }
+        let addresses = selection.compactMap(\.mtpAddress)
+        let mtp = state.mtpLocation != nil || !addresses.isEmpty
+        let mutable = !selection.isEmpty && addresses.count == selection.count && addresses.allSatisfy(MTPOps.canMutate)
 
         func applicable(_ c: MenuCommand) -> Bool {
+            if remote {
+                switch c {
+                case .open, .quickLook, .copy, .copyAsPath: return hasSel
+                case .openInNewWindow, .openInNewTab: return hasFolderSel
+                case .newFolder: return !hasSel && state.canWrite
+                case .paste: return clip && !hasSel && state.canWrite
+                case .pasteIntoFolder:
+                    return clip && one?.isDirectory == true && one?.mtpAddress.map(MTPOps.canWrite) == true
+                case .rename: return one != nil && (mtp ? mutable : state.deviceLocation != nil)
+                case .moveToTrash, .deletePermanently: return mtp ? mutable : hasSel && state.deviceLocation != nil
+                case .iconSize: return state.options.view == .icons && !hasSel
+                default: return false
+                }
+            }
             switch c {
             case .newFolder, .newFile: return !hasSel && fs
             case .newFolderWithSelection: return hasSel && fs
@@ -302,7 +321,7 @@ extension BrowserWindowController {
             case .showPackageContents: mi = Menus.item(c.title, #selector(showPackageContents(_:)))
             case .downloadNow: mi = Menus.item(c.title, #selector(downloadNow(_:)))
             case .removeDownload: mi = Menus.item(c.title, #selector(removeDownload(_:)))
-            case .moveToTrash: mi = Menus.item(isArchive ? "Move from Archive to Trash" : (state.deviceLocation != nil ? "Delete" : c.title), #selector(moveToTrash(_:)))
+            case .moveToTrash: mi = Menus.item(isArchive ? "Move from Archive to Trash" : (state.isDevice ? "Delete" : c.title), #selector(moveToTrash(_:)))
             case .deletePermanently: mi = Menus.item(c.title, #selector(deletePermanently(_:)))
             case .emptyTrash: mi = Menus.item(c.title, #selector(emptyTrash(_:)))
             case .eject: mi = Menus.item(c.title, #selector(eject(_:)))
@@ -366,10 +385,31 @@ extension BrowserWindowController {
         return m
     }
 
-    private func realSelectionItems(_ s: [FileItem]) -> [FileItem] { s.filter { $0.archivePath == nil } }
+    private func realSelectionItems(_ s: [FileItem]) -> [FileItem] { s.filter(\.isLocalFile) }
 
     func treeContextMenu(for n: TreeNode) -> NSMenu? {
         let m = NSMenu()
+        if let url = n.url, let address = MTPAddress(url: url) {
+            // Tree capabilities belong to this node, never the current tab or file selection.
+            m.autoenablesItems = false
+            m.addItem(Menus.item("Open", #selector(treeOpen(_:)), target: self, represented: url))
+            m.addItem(Menus.item("Open in New Window", #selector(treeOpenWindow(_:)), target: self, represented: url))
+            m.addItem(Menus.item("Open in New Tab", #selector(treeOpenTab(_:)), target: self, represented: url))
+            m.addItem(.separator())
+            if MTPOps.canWrite(address) {
+                m.addItem(Menus.item("New Folder Inside...", #selector(treeNewFolder(_:)), target: self, represented: url))
+                if !FileOps.shared.clipboardURLs.isEmpty { m.addItem(Menus.item("Paste into Folder", #selector(treePaste(_:)), target: self, represented: url)) }
+            }
+            if address.storageID != nil {
+                m.addItem(Menus.item("Copy", #selector(treeCopy(_:)), target: self, represented: url))
+            }
+            m.addItem(Menus.item("Copy as Path", #selector(treeCopyPath(_:)), target: self, represented: url))
+            if MTPOps.canMutate(address) {
+                m.addItem(Menus.item("Rename...", #selector(treeRename(_:)), target: self, represented: url))
+                m.addItem(Menus.item("Delete Permanently...", #selector(treeTrash(_:)), target: self, represented: url))
+            }
+            return m
+        }
         switch n.kind {
         case .share(let s):
             m.addItem(Menus.item("Connect...", #selector(treeConnect(_:)), target: self, represented: s.url))
@@ -423,23 +463,58 @@ extension BrowserWindowController {
         }
     }
 
-    @objc func treeOpen(_ s: NSMenuItem) { if let u = s.representedObject as? URL { state.go(TreeNode(.folder(u), title: "").location!) } }
-    @objc func treeOpenWindow(_ s: NSMenuItem) { if let u = s.representedObject as? URL { AppDelegate.shared.openWindow(.directory(u)) } }
-    @objc func treeOpenTab(_ s: NSMenuItem) { if let u = s.representedObject as? URL { AppDelegate.shared.openTab(.directory(u), from: self) } }
+    private func treeLocation(_ url: URL) -> Location? {
+        if let address = MTPAddress(url: url) { return .mtp(address) }
+        guard LocalFileBoundary.accepts(url) else { return nil }
+        return TreeNode(.folder(url), title: "").location
+    }
+
+    @objc func treeOpen(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL, let location = treeLocation(url) else { return }
+        state.go(location)
+    }
+    @objc func treeOpenWindow(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL, let location = treeLocation(url) else { return }
+        AppDelegate.shared.openWindow(location)
+    }
+    @objc func treeOpenTab(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL, let location = treeLocation(url) else { return }
+        AppDelegate.shared.openTab(location, from: self)
+    }
+    @objc func treeRename(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        renameViaPrompt(url)
+    }
     @objc func treeNewFolder(_ s: NSMenuItem) { if let u = s.representedObject as? URL { createFolder(withSelection: false, inside: u); tree.rebuild() } }
     @objc func treeEject(_ s: NSMenuItem) { if let u = s.representedObject as? URL { VolumeOps.eject(u, window: window) } }
-    @objc func treeCopy(_ s: NSMenuItem) { if let u = s.representedObject as? URL { FileOps.shared.copy([u]) } }
+    @objc func treeCopy(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        if let address = MTPAddress(url: url) { MTPOps.copy([address], window: window) }
+        else { FileOps.shared.copy([url]) }
+    }
     @objc func treeCopyPath(_ s: NSMenuItem) { if let u = s.representedObject as? URL { FileOps.shared.copyPaths([u]) } }
-    @objc func treePaste(_ s: NSMenuItem) { if let u = s.representedObject as? URL { FileOps.shared.paste(into: u, window: window) } }
-    @objc func treeTrash(_ s: NSMenuItem) { if let u = s.representedObject as? URL { FileOps.shared.moveToTrash([u], window: window) } }
+    @objc func treePaste(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        if let address = MTPAddress(url: url) {
+            MTPOps.upload(FileOps.shared.clipboardURLs, to: address, state: state, window: window)
+        } else { FileOps.shared.paste(into: url, window: window) }
+    }
+    @objc func treeTrash(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        if let address = MTPAddress(url: url) { MTPOps.remove([address], state: state, window: window) }
+        else { FileOps.shared.moveToTrash([url], window: window) }
+    }
     @objc func treeFavorite(_ s: NSMenuItem) {
-        guard let u = s.representedObject as? URL else { return }
+        guard let u = s.representedObject as? URL, LocalFileBoundary.accepts(u) else { return }
         if Favorites.contains(u) { try? Favorites.remove(u) } else { try? Favorites.add(u) }
         tree.rebuild()
     }
     @objc func treeMakeDefault(_ s: NSMenuItem) { if let u = s.representedObject as? URL { makeDefaultFolder(u) } }
     @objc func treeMakeHome(_ s: NSMenuItem) { if let u = s.representedObject as? URL { makeHomeFolder(u) } }
-    @objc func treeFinder(_ s: NSMenuItem) { if let u = s.representedObject as? URL { NSWorkspace.shared.open(u) } }
+    @objc func treeFinder(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL, LocalFileBoundary.accepts(url) else { return }
+        NSWorkspace.shared.open(url)
+    }
     @objc func treeTerminal(_ s: NSMenuItem) { if let u = s.representedObject as? URL { Terminal.open(u) } }
     @objc func treeConnect(_ s: NSMenuItem) { if let str = s.representedObject as? String, let u = URL(string: str) { mountShare(u) } }
     @objc func treePin(_ s: NSMenuItem) {
@@ -523,7 +598,7 @@ enum NewDocumentViaApp {
     }
 
     static func create(app: URL, in dir: URL?, window: NSWindow?, done: @escaping (URL) -> Void) {
-        guard let dir, let a = scriptableApps().first(where: { $0.url == app }) else { return }
+        guard let dir, LocalFileBoundary.accepts(dir), let a = scriptableApps().first(where: { $0.url == app }) else { return }
         let suggested = FileNaming.uniqueURL(in: dir, name: "Untitled." + a.ext).lastPathComponent
         guard let name = Alerts.prompt(String(format: "New %@ Document", a.name), message: String(format: "A new empty document will be created inside “%@”", FileNaming.displayName(of: dir)), defaultValue: suggested, ok: "Create") else { return }
         let dest = dir.appendingPathComponent(name)

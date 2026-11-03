@@ -159,6 +159,8 @@ public final class FileOperation: ObservableObject, Identifiable {
 
     private func run() {
         do {
+            // Reject remote identities before measuring sources or touching any destination.
+            try LocalFileBoundary.require(sources + (destination.map { [$0] } ?? []))
             try prepare()
             publish { $0.state = .running }
             switch kind {
@@ -214,6 +216,7 @@ public final class FileOperation: ObservableObject, Identifiable {
     }
 
     public static func sameVolume(_ a: URL, _ b: URL) -> Bool {
+        guard LocalFileBoundary.accepts(a), LocalFileBoundary.accepts(b) else { return false }
         var sa = stat(), sb = stat()
         guard lstat(a.path, &sa) == 0 else { return false }
         // Nearest existing ancestor of the destination decides its volume.
@@ -223,6 +226,7 @@ public final class FileOperation: ObservableObject, Identifiable {
 
     /// Total bytes and item count under `url` (no symlink following).
     public static func measure(_ url: URL) -> (Int64, Int) {
+        guard LocalFileBoundary.accepts(url) else { return (0, 0) }
         var st = stat()
         guard lstat(url.path, &st) == 0 else { return (0, 0) }
         if (st.st_mode & S_IFMT) != S_IFDIR { return (Int64(st.st_size), 1) }

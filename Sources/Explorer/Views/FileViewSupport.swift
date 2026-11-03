@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import UniformTypeIdentifiers
 import ExplorerKit
 
@@ -22,14 +23,72 @@ extension FileViewing {
 enum DragOut {
     /// Pasteboard writer for an item. Archive entries become file promises extracted on drop.
     static func writer(for item: FileItem, state: BrowserState) -> NSPasteboardWriting? {
+        if let address = item.mtpAddress {
+            return mtpWriter(address: address, isDirectory: item.isDirectory, name: item.name, typeIdentifier: item.typeIdentifier)
+        }
         if let inner = item.archivePath, let archive = state.archive {
             let type = item.isDirectory ? UTType.folder.identifier : (item.typeIdentifier ?? UTType.data.identifier)
             let p = ArchivePromiseProvider(fileType: type, delegate: ArchivePromiseDelegate.shared)
             p.userInfo = (archive, inner, item.name)
             return p
         }
+        guard item.isLocalFile else { return nil }
         return item.url as NSURL
     }
+
+    /// Also used by the tree so remote identity URLs never reach the system file clipboard.
+    static func mtpWriter(address: MTPAddress, isDirectory: Bool, name: String, typeIdentifier: String?) -> NSPasteboardWriting? {
+        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\0") else { return nil }
+        let type = isDirectory ? UTType.folder.identifier : (typeIdentifier ?? UTType.data.identifier)
+        let provider = NSFilePromiseProvider(fileType: type, delegate: MTPPromiseDelegate.shared)
+        provider.userInfo = (address, name)
+        return provider
+    }
+}
+
+final class MTPPromiseDelegate: NSObject, NSFilePromiseProviderDelegate {
+    static let shared = MTPPromiseDelegate()
+    private let queue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.qualityOfService = .userInitiated
+        return queue
+    }()
+
+    func filePromiseProvider(_ provider: NSFilePromiseProvider, fileNameForType fileType: String) -> String {
+        (provider.userInfo as? (MTPAddress, String))?.1 ?? "Untitled"
+    }
+
+    func filePromiseProvider(_ provider: NSFilePromiseProvider, writePromiseTo url: URL, completionHandler: @escaping (Error?) -> Void) {
+        guard let (address, _) = provider.userInfo as? (MTPAddress, String) else {
+            completionHandler(OpError.message("Missing device item."))
+            return
+        }
+        do {
+            try LocalFileBoundary.require([url])
+            let staging = try MTPOps.stagingDirectory()
+            defer { MTPOps.discardEmptyStaging(staging) }
+            guard let source = try MTPService.shared.download([address], to: staging, progress: { _, _ in true }).first else {
+                throw OpError.message("The device did not return a file.")
+            }
+            // Prepare beside the promised destination, then publish atomically without replacement.
+            // A failed cross-volume copy must never leave a partial promised file or folder.
+            let manager = FileManager.default
+            let temporary = url.deletingLastPathComponent().appendingPathComponent(".explorer-mtp-promise-" + UUID().uuidString, isDirectory: true)
+            try manager.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            defer { try? manager.removeItem(at: temporary) }
+            let output = temporary.appendingPathComponent("output")
+            try manager.copyItem(at: source, to: output)
+            let status = output.withUnsafeFileSystemRepresentation { sourcePath in
+                url.withUnsafeFileSystemRepresentation { destinationPath in
+                    renamex_np(sourcePath!, destinationPath!, UInt32(RENAME_EXCL))
+                }
+            }
+            guard status == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+            completionHandler(nil)
+        } catch { completionHandler(error) }
+    }
+
+    func operationQueue(for provider: NSFilePromiseProvider) -> OperationQueue { queue }
 }
 
 final class ArchivePromiseProvider: NSFilePromiseProvider {}
@@ -59,15 +118,30 @@ final class ArchivePromiseDelegate: NSObject, NSFilePromiseProviderDelegate {
 // MARK: - Drop in
 
 enum DropIn {
+    private static func mtpDestination(_ dest: URL?, state: BrowserState?) -> MTPAddress? {
+        // An explicit tree or selected-folder destination wins over the active tab.
+        if let dest { return MTPAddress(url: dest) }
+        return state?.mtpLocation
+    }
+
+    private static func hasPromises(_ info: NSDraggingInfo) -> Bool {
+        info.draggingPasteboard.canReadObject(forClasses: [NSFilePromiseReceiver.self], options: nil)
+    }
+
     static let types: [NSPasteboard.PasteboardType] = [.fileURL] + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
 
     static func urls(_ info: NSDraggingInfo) -> [URL] {
-        (info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        ((info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []).filter(LocalFileBoundary.accepts)
     }
 
     /// Validates a drop onto `dest` (a folder URL) and returns the drag operation for the cursor.
     static func validate(_ info: NSDraggingInfo, dest: URL?, state: BrowserState?) -> NSDragOperation {
         let srcs = urls(info)
+        if let address = mtpDestination(dest, state: state) {
+            guard MTPOps.canWrite(address) else { return [] }
+            return !srcs.isEmpty || hasPromises(info) ? .copy : []
+        }
+        if let dest, !LocalFileBoundary.accepts(dest) { return [] }
         if state?.isArchive == true && dest == nil {
             return (state?.archive?.isWritable ?? false) && !srcs.isEmpty ? .copy : []
         }
@@ -92,6 +166,30 @@ enum DropIn {
     @discardableResult
     static func perform(_ info: NSDraggingInfo, dest: URL?, archiveInner: String? = nil, state: BrowserState?, window: NSWindow?) -> Bool {
         let srcs = urls(info)
+        if let address = mtpDestination(dest, state: state) {
+            guard MTPOps.canWrite(address) else { return false }
+            if !srcs.isEmpty {
+                MTPOps.upload(srcs, to: address, state: state, window: window)
+                return true
+            }
+            guard let receivers = info.draggingPasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self], options: nil) as? [NSFilePromiseReceiver], !receivers.isEmpty else { return false }
+            do {
+                for receiver in receivers {
+                    let staging = try MTPOps.stagingDirectory()
+                    receiver.receivePromisedFiles(atDestination: staging, options: [:], operationQueue: ArchivePromiseDelegate.shared.queue) { url, error in
+                        DispatchQueue.main.async {
+                            if let error { Alerts.error("Error receiving file", error.localizedDescription, window: window) }
+                            else { MTPOps.upload([url], to: address, state: state, window: window) }
+                        }
+                    }
+                }
+                return true
+            } catch {
+                Alerts.error("Error receiving file", error.localizedDescription, window: window)
+                return false
+            }
+        }
+        if let dest, !LocalFileBoundary.accepts(dest) { return false }
         if let state, state.isArchive, let archive = state.archive {
             guard !srcs.isEmpty else { return false }
             ArchiveOps.add(srcs, to: archive, inner: archiveInner ?? state.archiveInner, state: state, window: window)
@@ -129,7 +227,7 @@ enum ItemStyle {
         case .show: return item.isFolder ? item.displayName : item.name
         case .hide: return item.isFolder || item.isPackage && item.fileExtension == "app" ? item.displayName : (item.stem.isEmpty ? item.name : item.stem)
         case .respectFinder:
-            if item.archivePath != nil { return item.name }
+            if !item.isLocalFile { return item.name }
             return FileManager.default.displayName(atPath: item.url.path)
         }
     }

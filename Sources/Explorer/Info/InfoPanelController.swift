@@ -55,7 +55,11 @@ final class InfoPanelController: NSViewController, NSTextViewDelegate {
     // MARK: Builders
 
     private func buildFolderInfo(_ st: BrowserState) {
-        guard let dir = st.currentDirectory else { add(title(st.title)); return }
+        guard let dir = st.currentDirectory, LocalFileBoundary.accepts(dir) else {
+            add(title(st.title))
+            add(row("Contains items: ", String(st.items.count)))
+            return
+        }
         add(preview(icon: NSWorkspace.shared.icon(forFile: dir.path)))
         add(title(st.title))
         if let it = FileItemLoader.load(dir) {
@@ -83,7 +87,7 @@ final class InfoPanelController: NSViewController, NSTextViewDelegate {
         add(previewView(for: it, st))
         add(title(it.name))
         add(label(it.kind, secondary: true))
-        if it.isFolder, it.archivePath == nil {
+        if it.isFolder, it.isLocalFile {
             let n = FileItemLoader.childCount(it.url, includeHidden: st.options.showHidden) ?? 0
             add(row("Contains items: ", String(n)))
             let sizeRow = row("Size: ", it.size.map { SizeFormat.string($0) } ?? "···")
@@ -98,12 +102,12 @@ final class InfoPanelController: NSViewController, NSTextViewDelegate {
             if let c = it.compressedSize { add(row("Compressed Size: ", SizeFormat.string(c))) }
         } else {
             add(row("Size: ", SizeFormat.string(it.size)))
-            if let v = Volumes.volume(containing: it.url), let s = try? it.url.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize {
+            if it.isLocalFile, let v = Volumes.volume(containing: it.url), let s = try? it.url.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize {
                 add(row("Space occupied on volume: ", SizeFormat.string(Int64(s)))); _ = v
             }
         }
         addDates(it)
-        if it.archivePath == nil && IDeviceRegistry.parseVirtual(it.url) == nil {
+        if it.isLocalFile {
             if it.isSymlink, let d = try? FileManager.default.destinationOfSymbolicLink(atPath: it.url.path) { add(row("Original: ", d)) }
             if let w = whereFrom(it.url) { add(row("Where from: ", w)) }
             addTagsAndRating([it])
@@ -130,8 +134,8 @@ final class InfoPanelController: NSViewController, NSTextViewDelegate {
             line.lineBreakMode = .byTruncatingMiddle
             add(line)
         }
-        let real = items.filter { $0.archivePath == nil }
-        if !real.isEmpty {
+        let real = items.filter(\.isLocalFile)
+        if !real.isEmpty && real.count == items.count {
             addTagsAndRating(real)
             addPermissions(real.map(\.url))
         }
@@ -206,7 +210,7 @@ final class InfoPanelController: NSViewController, NSTextViewDelegate {
         if let inner = it.archivePath, let a = st.archive, !it.isDirectory {
             if let tmp = try? a.extractToTemp([inner]) { url = tmp.appendingPathComponent(inner) }
         }
-        if IDeviceRegistry.parseVirtual(it.url) != nil { return preview(icon: ThumbnailStore.icon(for: it, size: 128)) }
+        if !it.isLocalFile && it.archivePath == nil { return preview(icon: ThumbnailStore.icon(for: it, size: 128)) }
         // Editable text for small text files
         if it.isText, !it.isDirectory, it.archivePath == nil, (it.size ?? 0) < 100_000 {
             return textEditor(url)
@@ -313,7 +317,7 @@ final class InfoPanelController: NSViewController, NSTextViewDelegate {
 
     private func flushText() {
         saveWork?.cancel()
-        guard let u = textEditURL, let tv = textView, tv.isEditable else { return }
+        guard let u = textEditURL, LocalFileBoundary.accepts(u), let tv = textView, tv.isEditable else { return }
         guard let data = tv.string.data(using: textEncoding) else {
             Alerts.error("Error saving file", "Could not encode text in the selected encoding.", window: view.window); return
         }
