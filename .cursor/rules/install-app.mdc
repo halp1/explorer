@@ -1,0 +1,17 @@
+---
+description: Install and launch the newest Explorer build after app changes
+alwaysApply: true
+---
+
+# Install the completed app
+
+After every Explorer app change, run `make install` to build release, verify, replace the old app, and launch the latest app. Do not stop at source changes or a workspace build unless the user explicitly defers deployment.
+
+- Use [Explorer.app](</Applications/Explorer.app>) as the canonical installed copy.
+- Quit the old Explorer gracefully before replacing its app bundle.
+- Verify the source build and exact resolved target paths before replacing or removing anything.
+- Replace the whole old bundle so stale resources cannot survive an overlay copy. Keep recovery possible until the replacement is verified.
+- Remove an obsolete `~/Applications/Explorer.app` duplicate only after verifying its bundle identifier is `com.halp.explorer` and the canonical installation succeeds.
+- Preserve application preferences, support data, and all unrelated apps or user files.
+- Verify the installed executable matches the new build, verify its signature, then launch the canonical installed app.
+- Use `make install`, which invokes the [guarded installer](<../../scripts/install-app.sh>) after the release build. Do not bypass its verification, staging, rollback, or duplicate cleanup safeguards.

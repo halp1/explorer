@@ -11,13 +11,9 @@ BIN = $(shell swift build $(SWIFT_FLAGS) -c $(CONFIG) --show-bin-path)
 release:
 	$(MAKE) app CONFIG=release
 
-# Installs to ~/Applications (no admin needed) and registers with Launch Services.
+# Builds release, replaces the canonical app safely, and launches it.
 install: release
-	rm -rf "$(HOME)/Applications/Explorer.app"
-	mkdir -p "$(HOME)/Applications"
-	ditto build/Explorer.app "$(HOME)/Applications/Explorer.app"
-	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$(HOME)/Applications/Explorer.app"
-	@echo "Installed $(HOME)/Applications/Explorer.app"
+	bash scripts/install-app.sh
 
 all: app
 
