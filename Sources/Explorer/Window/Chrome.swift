@@ -46,7 +46,7 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
         ])
         control.isHidden = true
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 38),
+            heightAnchor.constraint(equalToConstant: 31),
             control.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12), control.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
 
             control.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -617,7 +617,7 @@ final class ActionsRowView: NSView {
         let sep = NSBox(); sep.boxType = .separator
         [popup, sep].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 38),
+            heightAnchor.constraint(equalToConstant: 37),
             popup.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12), popup.centerYAnchor.constraint(equalTo: centerYAnchor),
             sep.leadingAnchor.constraint(equalTo: leadingAnchor), sep.trailingAnchor.constraint(equalTo: trailingAnchor), sep.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
@@ -659,7 +659,7 @@ final class CrumbButton: NSButton {
         self.isBordered = false
         self.target = target
         self.action = action
-        self.font = .systemFont(ofSize: 13, weight: .regular)
+        self.font = .systemFont(ofSize: 11, weight: .medium)
         self.contentTintColor = .labelColor
         self.wantsLayer = true
         self.layer?.cornerRadius = 5

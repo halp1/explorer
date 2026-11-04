@@ -52,12 +52,12 @@ public struct SidebarSection: Codable, Hashable, Identifiable, Sendable {
         .init(id: "favorites", label: "Favorites", colorIndex: 7, icon: "star", disabled: false, expandedByDefault: false),
         .init(id: "home", label: "Home", colorIndex: 0, icon: "house", disabled: false, expandedByDefault: true),
         .init(id: "hd", label: "Hard drives", colorIndex: 0, icon: "internaldrive", disabled: false, expandedByDefault: false),
-        .init(id: "ed", label: "External drives", colorIndex: 0, icon: "externaldrive", disabled: false, expandedByDefault: true),
-        .init(id: "nd", label: "Network shares", colorIndex: 0, icon: "externaldrive.connected.to.line.below", disabled: false, expandedByDefault: true),
+        .init(id: "ed", label: "External drives", colorIndex: 0, icon: "externaldrive", disabled: false, expandedByDefault: false),
+        .init(id: "nd", label: "Network shares", colorIndex: 0, icon: "externaldrive.connected.to.line.below", disabled: false, expandedByDefault: false),
         .init(id: "remote", label: "Remote connections", colorIndex: 0, icon: "network", disabled: false, expandedByDefault: false),
         .init(id: "icloud", label: "iCloud Drive folder", colorIndex: 0, icon: "icloud", disabled: false, expandedByDefault: false),
         .init(id: "cs", label: "Cloud storage", colorIndex: 0, icon: "globe.americas", disabled: false, expandedByDefault: false),
-        .init(id: "idevice", label: "iOS Devices", colorIndex: 0, icon: "iphone", disabled: false, expandedByDefault: true),
+        .init(id: "idevice", label: "iOS Devices", colorIndex: 0, icon: "iphone", disabled: false, expandedByDefault: false),
         .init(id: "mtp", label: "MTP Devices", colorIndex: 0, icon: "externaldrive.connected.to.line.below", disabled: false, expandedByDefault: false),
         .init(id: "recent", label: "Recent files", colorIndex: 0, icon: "clock", disabled: false, expandedByDefault: false),
         .init(id: "tags", label: "Tags", colorIndex: 0, icon: "circlebadge.2", disabled: false, expandedByDefault: false),
@@ -95,8 +95,8 @@ public enum TableColumnID: String, Codable, CaseIterable, Sendable {
         }
     }
     public static let tableDefaults: [String: ColumnSetting] = [
-        "fileName": .init(order: 0, isHidden: false, width: 205), "dateModified": .init(order: 1, isHidden: false, width: 155),
-        "size": .init(order: 2, isHidden: false, width: 95), "fileType": .init(order: 3, isHidden: false, width: 130),
+        "fileName": .init(order: 0, isHidden: false, width: 217), "dateModified": .init(order: 1, isHidden: false, width: 154),
+        "size": .init(order: 2, isHidden: false, width: 94), "fileType": .init(order: 3, isHidden: false, width: 131),
         "dateCreated": .init(order: 4, isHidden: true, width: 150), "dateAdded": .init(order: 5, isHidden: true, width: 150),
         "dateOpened": .init(order: 6, isHidden: true, width: 150), "tags": .init(order: 7, isHidden: true, width: 100),
         "rating": .init(order: 8, isHidden: true, width: 80), "git": .init(order: 9, isHidden: true, width: 40),

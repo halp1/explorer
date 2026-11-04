@@ -30,7 +30,7 @@ enum TreeBuilder {
                 for d in children(ofSection: s.id, network: network) { out.append(top(d, s)) }
             case "icloud":
                 guard let u = Volumes.iCloudDrive else { continue }
-                let n = TreeBuilder.folderNode(u, title: "iCloud Drive"); n.symbol = "icloud"
+                let n = TreeBuilder.folderNode(u, title: "iCloud Drive"); n.symbol = "icloud"; n.alwaysExpandable = true
                 out.append(top(n, s))
             case "cs":
                 let u = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/CloudStorage", isDirectory: true)

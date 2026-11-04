@@ -534,7 +534,8 @@ final class TreeCell: NSTableCellView {
         label.lineBreakMode = ItemStyle.truncation(p.truncateFolders)
         let bold = n.isTopLevel && p.boldTopLevel
         // Top-level rows read like the original: same size as children, slightly bolder, secondary colour.
-        label.font = .systemFont(ofSize: 13 + CGFloat(p.fontSizeDelta), weight: bold && n.isTopLevel ? .semibold : .regular)
+        // The original's tree: 12 pt semibold for every node.
+        label.font = .systemFont(ofSize: 12 + CGFloat(p.fontSizeDelta), weight: .semibold)
         // Groups without a folder of their own (Tags, Star Ratings, …) read dimmer, as in the original.
         label.textColor = n.location == nil && n.isTopLevel && n.isFavoritesSection == false ? .secondaryLabelColor : .labelColor
         var tint = n.labelColor ?? (p.foldersInheritColor ? n.color : nil) ?? n.color ?? ThemeColors.theme

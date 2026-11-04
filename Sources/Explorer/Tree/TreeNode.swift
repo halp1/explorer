@@ -28,6 +28,7 @@ final class TreeNode: NSObject {
     var isFavorite = false
     var isVolume = false
     var ejectable = false
+    var alwaysExpandable = false
     var sectionID: String?
     var labelColor: NSColor?
 
@@ -68,6 +69,7 @@ final class TreeNode: NSObject {
         case .section: return true
         case .mtp: return isLoading || loadError != nil || children.map { !$0.isEmpty } ?? true
         case .folder(let u):
+            if alwaysExpandable { return true }
             if let c = children { return !c.isEmpty }
             if IDeviceRegistry.parseVirtual(u) != nil { return true }
             return TreeNode.hasSubfolders(u)

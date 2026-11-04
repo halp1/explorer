@@ -83,8 +83,6 @@ public enum Sorter {
             if folders != .mixed, a.isFolder != b.isFolder {
                 return folders == .first ? a.isFolder : !a.isFolder
             }
-            // Visible items before hidden ones (as the original lists dot-files after regular files).
-            if a.isHidden != b.isHidden { return !a.isHidden }
             let c = compare(a, b, key)
             if c == .orderedSame {
                 // stable tiebreak by name, always ascending

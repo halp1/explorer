@@ -36,7 +36,7 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
         table.allowsColumnResizing = true
         table.columnAutoresizingStyle = .noColumnAutoresizing
         table.style = .fullWidth
-        table.intercellSpacing = NSSize(width: 12, height: 0)
+        table.intercellSpacing = NSSize(width: 3, height: 0)
         table.gridStyleMask = []
         table.target = self
         table.doubleAction = #selector(doubleClick)
@@ -70,8 +70,8 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
             let s = settings[id.rawValue] ?? defaults[id.rawValue] ?? ColumnSetting(order: 99, isHidden: true, width: 100)
             let c = NSTableColumn(identifier: .init(id.rawValue))
             c.title = id.title
-            let lead = id == .fileName ? "   " : ""
-            c.headerCell.attributedStringValue = NSAttributedString(string: lead + id.title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
+            c.headerCell = InsetHeaderCell(textCell: id.title)
+            c.headerCell.attributedStringValue = NSAttributedString(string: id.title, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
             c.width = s.width
             c.minWidth = id == .fileName ? 120 : (id == .git ? 24 : 40)
             c.isHidden = id == .fileName ? false : s.isHidden
@@ -129,6 +129,14 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
     private func updateSortIndicator() {
         guard let o = state?.options else { return }
         table.sortDescriptors = [NSSortDescriptor(key: o.sortKey.rawValue, ascending: o.sortOrder == .ascending)]
+        for c in table.tableColumns {
+            let id = TableColumnID(rawValue: c.identifier.rawValue)
+            let sorted = id.map { $0.sortKey == o.sortKey } ?? false
+            c.headerCell.attributedStringValue = NSAttributedString(string: c.title, attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: sorted ? .bold : .medium),
+                .foregroundColor: sorted ? NSColor.labelColor : NSColor.secondaryLabelColor])
+        }
+        table.headerView?.needsDisplay = true
     }
 
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
@@ -189,17 +197,17 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
 
     /// Group headers are taller with breathing room above (Folders Pro: ~30 pt header after a ~20 pt gap).
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        if case .group = rows[row] { return row == 0 ? 28 : 50 }
+        // Measured from the original: first header 27 pt, later headers 41.5 pt (includes the gap above).
+        if case .group = rows[row] { return row == 0 ? 28 : 42 }
         return tableView.rowHeight
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         let v = FileRowView()
-        if case .group = rows[row] { v.isGroupHeader = true; return v }
-        // Stripe index restarts after every group header, like the original.
-        var i = 0, r = row - 1
-        while r >= 0, case .item = rows[r] { i += 1; r -= 1 }
-        v.stripe = Preferences.shared.alternatingRows && i % 2 == 1
+        if case .group = rows[row] { v.isGroupHeader = true; v.isFirstGroup = row == 0; return v }
+        // Global alternation where header rows count too (row 0 = first header): even rows are striped.
+        let grouped = state.options.grouping != .none
+        v.stripe = Preferences.shared.alternatingRows && (grouped ? row % 2 == 0 : row % 2 == 1)
         return v
     }
 
@@ -208,9 +216,9 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
         case .group(let g):
             // Full-width group rows span all columns via isGroupRow; guard against per-column calls.
             if let col = tableColumn, col !== tableView.tableColumns.first(where: { !$0.isHidden }) { return nil }
-            let a = NSMutableAttributedString(string: g.title, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.tertiaryLabelColor])
-            a.append(NSAttributedString(string: "   \(g.items.count)", attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.quaternaryLabelColor]))
-            let v = GroupHeaderCell(text: a)
+            let a = NSMutableAttributedString(string: g.title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.tertiaryLabelColor])
+            a.append(NSAttributedString(string: "   \(g.items.count)", attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.quaternaryLabelColor]))
+            let v = GroupHeaderCell(text: a, topInset: row == 0 ? 5 : 24)
             return v
         case .item(let it):
             guard let col = tableColumn, let id = TableColumnID(rawValue: col.identifier.rawValue) else { return nil }
@@ -223,7 +231,7 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
         let cell = (table.makeView(withIdentifier: ident, owner: self) as? FileCellView) ?? FileCellView(icon: column == .fileName)
         cell.identifier = ident
         let bold = Preferences.shared.boldRecentChanges && state.recentlyChanged.contains(it.id)
-        let font = ItemStyle.font(NSFont.systemFontSize, bold: false)
+        let font = ItemStyle.font(12, bold: false)
         let dd = ItemStyle.dateDisplay()
         var text = ""
         var align: NSTextAlignment = .left
@@ -231,17 +239,17 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
         case .fileName:
             let nameColor: NSColor = it.isHidden ? .tertiaryLabelColor : .labelColor
             let para = NSMutableParagraphStyle(); para.lineBreakMode = ItemStyle.truncation(Preferences.shared.truncateFiles)
-            let s = NSMutableAttributedString(string: ItemStyle.displayName(it), attributes: [.font: ItemStyle.font(NSFont.systemFontSize, bold: bold), .foregroundColor: nameColor, .paragraphStyle: para])
+            let s = NSMutableAttributedString(string: ItemStyle.displayName(it), attributes: [.font: ItemStyle.font(12, bold: bold), .foregroundColor: nameColor, .paragraphStyle: para])
             s.append(ItemStyle.badges(it))
             cell.text.attributedStringValue = s
             cell.text.lineBreakMode = ItemStyle.truncation(Preferences.shared.truncateFiles)
             cell.setIcon(for: it, state: state, size: 16)
             cell.text.delegate = self
             return cell
-        case .dateModified: text = dd.string(it.modified)
-        case .dateCreated: text = dd.string(it.created)
-        case .dateAdded: text = dd.string(it.added)
-        case .dateOpened: text = dd.string(it.opened)
+        case .dateModified: text = dd.string(it.modified); align = .right
+        case .dateCreated: text = dd.string(it.created); align = .right
+        case .dateAdded: text = dd.string(it.added); align = .right
+        case .dateOpened: text = dd.string(it.opened); align = .right
         case .size, .originalSize:
             text = it.isFolder && it.archivePath == nil ? (it.size.map { SizeFormat.string($0) } ?? "--") : SizeFormat.string(it.size)
             align = .right
@@ -251,7 +259,7 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
         case .rating: text = it.rating > 0 ? String(repeating: "★", count: it.rating) : ""; align = .right
         case .git: text = it.gitStatus.map { String($0.rawValue) } ?? ""; align = .center
         }
-        cell.text.font = bold && !it.isHidden ? ItemStyle.font(NSFont.systemFontSize, bold: true) : font
+        cell.text.font = bold && !it.isHidden ? ItemStyle.font(12, bold: true) : font
         cell.text.stringValue = text
         cell.text.alignment = align
         // Like the original: recently changed rows in full-strength text, older ones a step dimmer, hidden ones dimmest.
@@ -417,17 +425,17 @@ final class FileCellView: NSTableCellView {
             addSubview(iconView)
             imageView = iconView
             NSLayoutConstraint.activate([
-                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 13),
                 iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
                 iconView.heightAnchor.constraint(equalToConstant: 17),
                 iconView.widthAnchor.constraint(equalToConstant: 17),
                 text.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 7),
             ])
         } else {
-            text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2).isActive = true
+            text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9).isActive = true
         }
         NSLayoutConstraint.activate([
-            text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+            text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
             text.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
@@ -451,31 +459,47 @@ final class FileCellView: NSTableCellView {
 
 /// Row background: subtle stripes restarting per group; group headers get a hairline under them.
 final class FileRowView: NSTableRowView {
+    override var isFlipped: Bool { true }
     var stripe = false
     var isGroupHeader = false
+    var isFirstGroup = false
     override func drawBackground(in dirtyRect: NSRect) {
         if stripe && !isGroupHeader {
             NSColor.labelColor.withAlphaComponent(0.035).setFill()
-            bounds.fill()
+            NSBezierPath(roundedRect: NSRect(x: bounds.minX + 11, y: bounds.minY, width: bounds.width - 11, height: bounds.height), xRadius: 5, yRadius: 5).fill()
         }
-        if isGroupHeader {
+        if isGroupHeader && isFirstGroup {
+            // Only the top group gets a rule (6 pt above its bottom), as in the original.
             NSColor.separatorColor.setFill()
-            NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
+            NSRect(x: 0, y: bounds.minY + 22, width: bounds.width, height: 1).fill()
         }
     }
 }
 
 /// Group title pinned to the bottom of its (tall) row.
 final class GroupHeaderCell: NSView {
-    init(text: NSAttributedString) {
+    override var isFlipped: Bool { true }
+    init(text: NSAttributedString, topInset: CGFloat) {
         super.init(frame: .zero)
         let l = NSTextField(labelWithAttributedString: text)
         l.translatesAutoresizingMaskIntoConstraints = false
         addSubview(l)
         NSLayoutConstraint.activate([
             l.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 22),
-            l.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            l.topAnchor.constraint(equalTo: topAnchor, constant: topInset),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+}
+
+
+/// Header labels inset like the original (≈18 pt in the first column, 10 pt in the others).
+final class InsetHeaderCell: NSTableHeaderCell {
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        var r = super.drawingRect(forBounds: rect)
+        let inset: CGFloat = rect.minX < 1 ? 17 : 6
+        r.origin.x += inset; r.size.width -= inset
+        return r
+    }
+    override func titleRect(forBounds rect: NSRect) -> NSRect { drawingRect(forBounds: rect) }
 }
