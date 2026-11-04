@@ -60,6 +60,13 @@ final class TreeNode: NSObject {
         }
     }
 
+    /// False once a local folder row's directory is gone (trashed, moved or deleted elsewhere).
+    var targetExists: Bool {
+        guard case .folder(let u) = kind, IDeviceRegistry.parseVirtual(u) == nil else { return true }
+        var dir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: u.path, isDirectory: &dir) && dir.boolValue
+    }
+
     var isFavoritesSection: Bool { if case .section("favorites") = kind { return true }; return false }
 
     var isNodeSelectable: Bool { location != nil || { if case .share = kind { return true }; if case .remoteHost = kind { return true }; return false }() }

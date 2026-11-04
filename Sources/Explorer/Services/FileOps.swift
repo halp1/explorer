@@ -48,6 +48,13 @@ final class FileOps: ObservableObject {
             self.history.record(title ?? kind.undoTitle, op.undo)
             switch op.state {
             case .done: Sounds.play(kind == .trash || kind == .delete ? .trash : .done)
+            default: break
+            }
+            // Folder rows for removed or moved sources must go away immediately, even when FSEvents lags.
+            if kind == .trash || kind == .delete || kind == .move {
+                NotificationCenter.default.post(name: .treeFilesChanged, object: nil, userInfo: ["urls": op.sources + (op.destination.map { [$0] } ?? [])])
+            }
+            switch op.state {
             case .failed(let msg):
                 Sounds.play(.error)
                 Alerts.error(Self.errorTitle(kind), msg, window: window)

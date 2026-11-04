@@ -73,8 +73,11 @@ enum TreeBuilder {
         let prefs = Preferences.shared
         switch id {
         case "favorites":
-            return Favorites.all().map { link in
+            // Favorites whose folder was trashed or moved stay in the store (a restore revives them) but are hidden.
+            return Favorites.all().compactMap { link in
                 let target = Favorites.target(of: link)
+                var dir: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: target.path, isDirectory: &dir), dir.boolValue else { return nil }
                 let n = folderNode(target, title: link.lastPathComponent)
                 n.isFavorite = true
                 return n

@@ -377,6 +377,14 @@ final class BrowserState: ObservableObject {
             if isTrash { reload() }
             return
         }
+        // The shown folder itself was trashed, moved or deleted: step up to the nearest folder that still exists.
+        var isDir: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) || !isDir.boolValue {
+            var up = dir.deletingLastPathComponent()
+            while up.path != "/", !FileManager.default.fileExists(atPath: up.path) { up = up.deletingLastPathComponent() }
+            go(.directory(up))
+            return
+        }
         let token = loadToken
         let hidden = options.showHidden
         let preferPath = prefs.preferPathNames

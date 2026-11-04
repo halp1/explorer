@@ -29,8 +29,8 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         outline.floatsGroupRows = false
         outline.indentationPerLevel = 14
         outline.autoresizesOutlineColumn = false
-        // Single column that always fills the sidebar (unless "Do not truncate" wants horizontal scrolling).
-        outline.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        // Single column sized by fitColumn() to the visible width (unless "Do not truncate" wants horizontal scrolling).
+        outline.columnAutoresizingStyle = .noColumnAutoresizing
         outline.registerForDraggedTypes(DropIn.types + [.treeFavorite])
         outline.setDraggingSourceOperationMask([.copy, .move, .link], forLocal: false)
         outline.setDraggingSourceOperationMask([.copy, .move, .link, .generic], forLocal: true)
@@ -51,12 +51,18 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
         ])
         view = root
+        // The clip narrows when a legacy scroller appears without the sidebar itself relaying out.
+        scroll.contentView.postsFrameChangedNotifications = true
+        volumeObservers.append(NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: scroll.contentView, queue: .main) { [weak self] _ in self?.fitColumn() })
 
         let nc = NSWorkspace.shared.notificationCenter
         for n in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification, NSWorkspace.didRenameVolumeNotification] {
             volumeObservers.append(nc.addObserver(forName: n, object: nil, queue: .main) { [weak self] _ in self?.rebuild() })
         }
         volumeObservers.append(NotificationCenter.default.addObserver(forName: .treeNeedsRebuild, object: nil, queue: .main) { [weak self] _ in self?.rebuild() })
+        volumeObservers.append(NotificationCenter.default.addObserver(forName: .treeFilesChanged, object: nil, queue: .main) { [weak self] n in
+            self?.refreshAfterFileChange(n.userInfo?["urls"] as? [URL] ?? [])
+        })
         monitor = FolderMonitor(paths: [Favorites.folder.path, SavedSearchFile.folder.path]) { [weak self] _ in self?.rebuild() }
         monitor?.start()
         if Preferences.shared.sidebarSections.contains(where: { $0.id == "remote" && !$0.disabled }) {
@@ -77,12 +83,20 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        // The sidebar only gets its real width after layout; keep the single column filling it.
-        if Preferences.shared.truncateFolders != .none, let col = outline.tableColumns.first {
-            let w = scroll.contentView.bounds.width - outline.intercellSpacing.width
-            if w > 0, abs(col.width - w) > 1 { col.width = w }
-        }
+        fitColumn()
     }
+
+    /// Keeps the single column ending exactly at the visible edge (minus the source-list trailing
+    /// padding). A wider column pushes eject buttons and the selection pill under the clip edge.
+    private func fitColumn() {
+        guard Preferences.shared.truncateFolders != .none, let col = outline.tableColumns.first, outline.numberOfColumns > 0 else { return }
+        let target = scroll.contentView.bounds.width - Self.trailingPadding
+        let delta = target - outline.rect(ofColumn: 0).maxX
+        guard target > 0, abs(delta) > 0.5 else { return }
+        col.width = max(col.minWidth, col.width + delta)
+    }
+
+    private static let trailingPadding: CGFloat = 10
 
     deinit { volumeObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0); NotificationCenter.default.removeObserver($0) } }
 
@@ -90,7 +104,20 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
 
     func rebuild(initial: Bool = false) {
         TreeNode.subfolderCache.removeAll()
+        let scrollOrigin = scroll.contentView.bounds.origin
+        // MTP listings are slow USB round trips: carry loaded device folders over to the new nodes so a
+        // device republish does not collapse them to "Loading..." and shrink the tree under the scroller.
+        var loadedMTP: [String: TreeNode] = [:]
+        for n in allLoaded() {
+            if case .mtp = n.kind, n.children != nil, !n.isLoading, n.loadError == nil { loadedMTP[n.identity] = n }
+        }
         roots = TreeBuilder.sections(network: network)
+        for r in roots {
+            if case .mtp = r.kind, r.loadError == nil, let old = loadedMTP[r.identity] {
+                r.children = old.children
+                r.children?.forEach { $0.parent = r }
+            }
+        }
         let prefs = Preferences.shared
         if initial && expanded.isEmpty {
             let defaults = Set(prefs.sidebarSections.filter { $0.expandedByDefault ?? true }.map(\.id))
@@ -101,11 +128,99 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         outline.rowHeight = 21 + CGFloat(p.treeSpacing) + CGFloat(p.fontSizeDelta)
         outline.indentGuides = p.showIndentGuides
         scroll.hasHorizontalScroller = p.truncateFolders == .none
-        outline.columnAutoresizingStyle = p.truncateFolders == .none ? .noColumnAutoresizing : .uniformColumnAutoresizingStyle
+        outline.columnAutoresizingStyle = .noColumnAutoresizing
         outline.reloadData()
-        if p.truncateFolders != .none { outline.sizeLastColumnToFit() }
+        fitColumn()
         restoreExpansion(roots)
-        revealCurrent()
+        if !initial { restoreScroll(scrollOrigin) }
+        revealCurrent(scroll: initial)
+        updateFolderMonitor()
+    }
+
+    private func restoreScroll(_ origin: NSPoint) {
+        let clip = scroll.contentView
+        var b = clip.bounds
+        b.origin = origin
+        clip.scroll(to: clip.constrainBoundsRect(b).origin)
+        scroll.reflectScrolledClipView(clip)
+    }
+
+    // MARK: Disk changes
+
+    /// Watches every expanded folder so rows for folders that were trashed, moved or created elsewhere
+    /// update in place (FSEvents reports the parent directory of each change).
+    private var treeMonitor: FolderMonitor?
+    private var monitoredPaths: Set<String> = []
+
+    /// Loaded local folder nodes by path. One folder can appear several times (a favorite and the
+    /// same folder under Home), so every occurrence is kept.
+    private func loadedFolders() -> [String: [TreeNode]] {
+        var out: [String: [TreeNode]] = [:]
+        for n in allLoaded() {
+            guard case .folder(let u) = n.kind, n.children != nil, IDeviceRegistry.parseVirtual(u) == nil else { continue }
+            out[u.standardizedFileURL.path, default: []].append(n)
+        }
+        return out
+    }
+
+    private func updateFolderMonitor() {
+        var paths = Set(loadedFolders().keys)
+        // Favorites point anywhere: watch each target's parent so a trashed favorite disappears.
+        for f in roots.first(where: \.isFavoritesSection)?.children ?? [] {
+            if let u = f.url { paths.insert(u.deletingLastPathComponent().standardizedFileURL.path) }
+        }
+        guard paths != monitoredPaths else { return }
+        monitoredPaths = paths
+        treeMonitor?.stop()
+        treeMonitor = nil
+        guard !paths.isEmpty else { return }
+        let m = FolderMonitor(paths: Array(paths), latency: 0.4) { [weak self] changed in self?.foldersChanged(changed) }
+        if m.start() { treeMonitor = m }
+    }
+
+    private func foldersChanged(_ changed: [String]) {
+        let dirs = Set(changed.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
+        // A favorite whose folder disappeared lives in its own section, not under a watched parent.
+        let favorites = roots.first(where: \.isFavoritesSection)?.children ?? []
+        if favorites.contains(where: { f in
+            guard let u = f.url, dirs.contains(u.deletingLastPathComponent().standardizedFileURL.path) else { return false }
+            return !f.targetExists
+        }) {
+            rebuild()
+            return
+        }
+        let loaded = loadedFolders()
+        var touched = false
+        for d in dirs { for n in loaded[d] ?? [] { touched = refreshChildren(of: n) || touched } }
+        if touched { updateFolderMonitor(); revealCurrent(scroll: false) }
+    }
+
+    /// Re-reads one folder's subfolders, keeping the node objects (and their expansion) for survivors.
+    @discardableResult
+    func refreshChildren(of node: TreeNode) -> Bool {
+        guard let old = node.children else { return false }
+        let fresh = TreeNode(node.kind, title: node.title)
+        fresh.sectionID = node.sectionID
+        fresh.color = node.color
+        TreeBuilder.loadChildren(fresh)
+        let newKids = fresh.children ?? []
+        guard newKids.map(\.identity) != old.map(\.identity) else { return false }
+        let survivors = Dictionary(old.map { ($0.identity, $0) }, uniquingKeysWith: { a, _ in a })
+        node.children = newKids.map { k in
+            let kept = survivors[k.identity] ?? k
+            kept.parent = node
+            return kept
+        }
+        TreeNode.subfolderCache.removeAll()
+        outline.reloadItem(node, reloadChildren: true)
+        restoreExpansion(node.children ?? [])
+        return true
+    }
+
+    /// Prunes the tree right after Explorer itself trashes, deletes or moves folders, without waiting
+    /// for FSEvents. Only the parents of the affected items are re-read.
+    func refreshAfterFileChange(_ urls: [URL]) {
+        foldersChanged(urls.flatMap { [$0.path, $0.deletingLastPathComponent().path] })
     }
 
     private func restoreExpansion(_ nodes: [TreeNode]) {
@@ -117,7 +232,9 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
 
     // MARK: Current folder sync
 
-    func revealCurrent() {
+    /// Selects the current location's row. `scroll` is for navigation only: lazy loads and rebuilds must
+    /// not yank the sidebar away from where the user is expanding folders.
+    func revealCurrent(scroll: Bool = true) {
         guard let state = host?.state else { return }
         let target = state.location
         guard let node = find(target) else {
@@ -131,7 +248,7 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
             suppressSelection = true
             outline.selectRowIndexes([row], byExtendingSelection: false)
             suppressSelection = false
-            if Preferences.shared.autoScrollTree { scrollRowIntoComfortableView(row) }
+            if scroll && Preferences.shared.autoScrollTree { scrollRowIntoComfortableView(row) }
         }
     }
 
@@ -246,8 +363,11 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
                     failed.parent = node
                     node.children = [failed]
                 }
+                let origin = self.scroll.contentView.bounds.origin
                 self.outline.reloadItem(node, reloadChildren: true)
-                if case .success = result { self.revealCurrent() }
+                self.restoreExpansion(node.children ?? [])
+                self.restoreScroll(origin)
+                if case .success = result { self.revealCurrent(scroll: false) }
             }
         }
     }
@@ -271,14 +391,18 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
 
     func outlineView(_ ov: NSOutlineView, shouldSelectItem item: Any) -> Bool { (item as! TreeNode).isNodeSelectable }
 
-    func outlineView(_ ov: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? { AccentRowView() }
+    func outlineView(_ ov: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
+        let v = AccentRowView()
+        v.pillHeight = ov.rowHeight
+        return v
+    }
 
     func outlineView(_ ov: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
         let n = item as! TreeNode
         let base = ov.rowHeight
-        // Extra breathing room above each top-level group after the first (as in the original sidebar).
-        if n.isTopLevel, let i = roots.firstIndex(of: n), i > 0 { return base + 6 }
-        return base
+        // Breathing room above each top-level group, and below the toolbar for the first one.
+        guard n.isTopLevel, let i = roots.firstIndex(of: n) else { return base }
+        return base + (i == 0 ? 8 : 6)
     }
 
     func outlineView(_ ov: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -327,6 +451,11 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         case .remoteHost(_, let u):
             host?.showMountShare(prefill: u)
         default:
+            // A folder removed behind the tree's back: drop the row instead of opening a missing path.
+            if !n.targetExists {
+                if let p = n.parent, case .folder = p.kind { refreshChildren(of: p) } else { rebuild() }
+                return
+            }
             if let loc = n.location { host?.state.go(loc) }
         }
     }
@@ -454,6 +583,8 @@ extension NSPasteboard.PasteboardType {
 
 extension Notification.Name {
     static let treeNeedsRebuild = Notification.Name("ExplorerTreeNeedsRebuild")
+    /// userInfo["urls"]: items Explorer just trashed, deleted or moved.
+    static let treeFilesChanged = Notification.Name("ExplorerTreeFilesChanged")
     static let viewSettingsChanged = Notification.Name("ExplorerViewSettingsChanged")
 }
 
@@ -557,8 +688,11 @@ final class TreeCell: NSTableCellView {
     }
 
     private var selectedTint: NSColor?
+    // Vibrant text blends into the solid pill and reads pale. Selected rows draw plain white.
+    override var allowsVibrancy: Bool { backgroundStyle != .emphasized }
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet {
+            if oldValue != backgroundStyle { label.needsDisplay = true; icon.needsDisplay = true; needsDisplay = true }
             let sel = backgroundStyle == .emphasized
             label.textColor = sel ? .white : (node.map { $0.location == nil && $0.isTopLevel && !$0.isFavoritesSection ? NSColor.secondaryLabelColor : NSColor.labelColor } ?? .labelColor)
             // Original keeps the coloured symbol on the pill, lightened toward white.
@@ -619,24 +753,41 @@ final class IndentGuidesView: NSView {
 
 /// Solid accent-coloured selection pill (Folders Pro style) instead of the translucent source-list highlight.
 final class AccentRowView: NSTableRowView {
-    override func drawSelection(in dirtyRect: NSRect) {
-        guard selectionHighlightStyle != .none else { return }
-        // Folders Pro: full-width inset pill, accent fill, faint light rim; height follows the label row.
-        // Row views start at x=0 in the outline; inset so the rounded corners are fully visible like the original.
-        let r = NSRect(x: bounds.minX + 14, y: bounds.maxY - 25, width: bounds.width - 26, height: 23).integral
+    /// Height of the label line. Rows that carry extra space above them (section gaps) keep that
+    /// space outside the pill.
+    var pillHeight: CGFloat = 23
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        guard isSelected else { return }
+        let h = min(pillHeight, bounds.height)
+        let r = NSRect(x: bounds.minX + 8, y: bounds.maxY - h, width: bounds.width - 16, height: h).insetBy(dx: 0, dy: 1)
         let path = NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6)
         // Resolve the accent in the row's appearance (dynamic asset colour), then blend like the original (~80%).
         var base = ThemeColors.theme
         effectiveAppearance.performAsCurrentDrawingAppearance { base = ThemeColors.theme.usingColorSpace(.sRGB) ?? base }
-        // Same strength whether or not the window is key (the original doesn't fade it).
-        base.withAlphaComponent(0.8).setFill()
+        // Same strength whether or not the window is key.
+        base.setFill()
         path.fill()
         NSColor.white.withAlphaComponent(0.2).setStroke()
         path.lineWidth = 1
         path.stroke()
     }
+    override func drawSelection(in dirtyRect: NSRect) {}
+    override var isSelected: Bool { didSet { needsDisplay = true } }
     override var interiorBackgroundStyle: NSView.BackgroundStyle { isSelected ? .emphasized : .normal }
     override var isEmphasized: Bool { get { true } set { } }
+
+    // Source lists add a full-row selection material (it also covers the gap above a top-level row and
+    // reaches the clip edge). Keep it hidden so the pill is the only highlight.
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        if subview is NSVisualEffectView { subview.isHidden = true }
+    }
+    override func layout() {
+        super.layout()
+        for v in subviews where v is NSVisualEffectView { v.isHidden = true }
+    }
 }
 
 
