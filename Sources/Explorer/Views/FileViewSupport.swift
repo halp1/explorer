@@ -18,6 +18,59 @@ extension FileViewing {
     func setZoom(_ delta: Int) {}
 }
 
+/// Click an already selected item's name again and, after the double-click interval, its name becomes
+/// editable (Finder and Windows Explorer behaviour). Any other input in the meantime cancels it.
+final class SlowClickRename {
+    private var pending: DispatchWorkItem?
+    /// Set by the view's drag delegate so a click that turned into a drag never arms a rename.
+    var dragBegan = false
+    private var downPoint = NSPoint.zero
+
+    func mouseDown(_ event: NSEvent) {
+        cancel()
+        dragBegan = false
+        downPoint = event.locationInWindow
+    }
+
+    /// True when a plain single click (no modifiers) was released near where it went down.
+    /// Call right after the view's `super.mouseDown`, which tracks the press until mouse up.
+    func isPlainClick(_ event: NSEvent, in window: NSWindow?) -> Bool {
+        guard event.clickCount == 1, event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty,
+              !dragBegan, let window else { return false }
+        // The mouse up the table tracking consumed is the current event; fall back to the press point.
+        let up = NSApp.currentEvent.flatMap { $0.type == .leftMouseUp && $0.window === window ? $0.locationInWindow : nil } ?? downPoint
+        return hypot(up.x - downPoint.x, up.y - downPoint.y) <= 4
+    }
+
+    func schedule(_ action: @escaping () -> Void) {
+        pending?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            self?.pending = nil
+            if let o = self?.resignObserver { NotificationCenter.default.removeObserver(o); self?.resignObserver = nil }
+            // Still holding the button (a slow press or a pending drag) is not a rename click.
+            guard NSEvent.pressedMouseButtons == 0 else { return }
+            action()
+        }
+        pending = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: w)
+    }
+
+    /// Switching apps or windows during the wait abandons the rename.
+    func cancelWhenWindowResigns(_ window: NSWindow) {
+        if let o = resignObserver { NotificationCenter.default.removeObserver(o) }
+        resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
+            self?.cancel()
+        }
+    }
+
+    func cancel() {
+        pending?.cancel(); pending = nil
+        if let o = resignObserver { NotificationCenter.default.removeObserver(o); resignObserver = nil }
+    }
+
+    private var resignObserver: NSObjectProtocol?
+}
+
 // MARK: - Drag out
 
 enum DragOut {

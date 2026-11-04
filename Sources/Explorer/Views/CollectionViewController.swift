@@ -75,6 +75,7 @@ final class CollectionViewController: NSViewController, FileViewing, NSCollectio
     }
 
     func reloadItems() {
+        collection.slowRename.cancel()
         guard isViewLoaded else { return }
         sections = state.options.grouping == .none ? [ItemGroup(id: "all", title: "", order: 0, items: state.items)] : state.groups
         configureLayout()
@@ -146,18 +147,37 @@ final class CollectionViewController: NSViewController, FileViewing, NSCollectio
     func collectionView(_ cv: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) { selectionChanged() }
 
     private func selectionChanged() {
+        collection.slowRename.cancel()
         guard !suppressSelection else { return }
         state.selection = collection.selectionIndexPaths.sorted().compactMap(item(at:))
     }
 
     func doubleClicked(_ ip: IndexPath) {
+        collection.slowRename.cancel()
         guard let it = item(at: ip) else { return }
         host?.open([it], newWindow: false)
     }
 
     // MARK: Rename
 
+    /// Second click on the selected item's name: rename after the double-click interval (see the table view).
+    func armSlowRename(_ ip: IndexPath) {
+        guard renaming == nil, let it = item(at: ip), host?.canRenameInline(it) == true else { return }
+        let id = it.id
+        collection.slowRename.schedule { [weak self] in
+            guard let self, self.renaming == nil, let w = self.collection.window, w.firstResponder === self.collection,
+                  self.state.selection.count == 1, self.state.selection.first?.id == id else { return }
+            self.beginRename(it.url)
+        }
+    }
+
+    func collectionView(_ cv: NSCollectionView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forItemsAt indexPaths: Set<IndexPath>) {
+        collection.slowRename.dragBegan = true
+        collection.slowRename.cancel()
+    }
+
     func beginRename(_ url: URL) {
+        collection.slowRename.cancel()
         for (s, g) in sections.enumerated() {
             if let i = g.items.firstIndex(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) {
                 let ip = IndexPath(item: i, section: s)
@@ -220,18 +240,35 @@ final class CollectionViewController: NSViewController, FileViewing, NSCollectio
 final class FileCollectionView: NSCollectionView {
     weak var owner: CollectionViewController?
     private let typeSelect = TypeSelect()
+    let slowRename = SlowClickRename()
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        slowRename.cancel()
         let ip = indexPathForItem(at: convert(event.locationInWindow, from: nil))
         return owner?.menuFor(ip)
     }
 
     override func mouseDown(with event: NSEvent) {
+        slowRename.mouseDown(event)
+        let ip = indexPathForItem(at: convert(event.locationInWindow, from: nil))
+        // Only a click on the name label of the one selected item in an already focused view arms a rename.
+        var armed = false
+        if let ip, selectionIndexPaths == [ip], window?.firstResponder === self,
+           let ci = item(at: ip) as? CollectionItem {
+            armed = ci.nameField.frame.contains(ci.view.convert(event.locationInWindow, from: nil))
+        }
         super.mouseDown(with: event)
-        if event.clickCount == 2, let ip = indexPathForItem(at: convert(event.locationInWindow, from: nil)) { owner?.doubleClicked(ip) }
+        if event.clickCount == 2, let ip { owner?.doubleClicked(ip) }
+        if armed, let ip, slowRename.isPlainClick(event, in: window), let window {
+            owner?.armSlowRename(ip)
+            slowRename.cancelWhenWindowResigns(window)
+        }
     }
 
+    override func resignFirstResponder() -> Bool { slowRename.cancel(); return super.resignFirstResponder() }
+
     override func scrollWheel(with event: NSEvent) {
+        slowRename.cancel()
         if event.modifierFlags.contains(.command), owner?.mode == .icons {
             if abs(event.scrollingDeltaY) > 2 { owner?.setZoom(event.scrollingDeltaY > 0 ? 1 : -1) }
             return
@@ -244,6 +281,7 @@ final class FileCollectionView: NSCollectionView {
     }
 
     override func keyDown(with event: NSEvent) {
+        slowRename.cancel()
         if let host = owner?.host, host.handleKey(event) { return }
         if let ch = event.characters, !ch.isEmpty, event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
            ch.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || CharacterSet.punctuationCharacters.contains($0) }),

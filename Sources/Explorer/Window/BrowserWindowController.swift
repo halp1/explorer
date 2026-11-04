@@ -597,6 +597,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     // MARK: Rename
 
+    /// Inline (click-to-rename) editing applies to local files outside archives. Devices rename via a prompt.
+    func canRenameInline(_ it: FileItem) -> Bool {
+        it.isLocalFile && it.mtpAddress == nil && !state.isArchive && state.deviceLocation == nil
+    }
+
     func commitRename(_ url: URL, to name: String) {
         if let address = MTPAddress(url: url) {
             MTPOps.rename(address, to: name, state: state, window: window)

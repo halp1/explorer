@@ -151,6 +151,7 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
 
     func reloadItems() {
         guard isViewLoaded else { return }
+        table.slowRename.cancel()
         let p = Preferences.shared
         table.rowHeight = CGFloat(p.rowHeight) + 1 + CGFloat(p.fontSizeDelta)
         table.usesAlternatingRowBackgroundColors = false   // FileRowView draws stripes per group
@@ -270,6 +271,7 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        table.slowRename.cancel()
         guard !suppressSelection else { return }
         state.selection = table.selectedRowIndexes.compactMap(item(at:))
     }
@@ -277,6 +279,7 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
     // MARK: Actions
 
     @objc private func doubleClick() {
+        table.slowRename.cancel()
         let r = table.clickedRow
         guard r >= 0, let it = item(at: r) else { return }
         host?.open([it], newWindow: false)
@@ -284,7 +287,20 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
 
     // MARK: Rename
 
+    /// Second click on the selected row's name: rename after the double-click interval unless the
+    /// selection, focus or window changed in the meantime.
+    func armSlowRename(row: Int) {
+        guard renaming == nil, let it = item(at: row), host?.canRenameInline(it) == true else { return }
+        let id = it.id
+        table.slowRename.schedule { [weak self] in
+            guard let self, self.renaming == nil, let w = self.table.window, w.firstResponder === self.table,
+                  self.state.selection.count == 1, self.state.selection.first?.id == id else { return }
+            self.beginRename(it.url)
+        }
+    }
+
     func beginRename(_ url: URL) {
+        table.slowRename.cancel()
         guard let row = rows.firstIndex(where: { if case .item(let i) = $0 { return i.url.standardizedFileURL == url.standardizedFileURL }; return false }),
               let colIdx = table.tableColumns.firstIndex(where: { $0.identifier.rawValue == TableColumnID.fileName.rawValue }) else { return }
         table.scrollRowToVisible(row)
@@ -321,6 +337,11 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
     }
 
     // MARK: Drag & drop
+
+    func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forRowIndexes rowIndexes: IndexSet) {
+        table.slowRename.dragBegan = true
+        table.slowRename.cancel()
+    }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
         item(at: row).flatMap { DragOut.writer(for: $0, state: state) }
@@ -364,13 +385,43 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
 final class FileTableView: NSTableView {
     weak var owner: TableViewController?
     private let typeSelect = TypeSelect()
+    let slowRename = SlowClickRename()
+
+    override func mouseDown(with event: NSEvent) {
+        slowRename.mouseDown(event)
+        let p = convert(event.locationInWindow, from: nil)
+        let r = row(at: p), c = column(at: p)
+        // Only a click on the name text of the one selected row in an already focused list arms a rename.
+        var armed = false
+        if r >= 0, c >= 0, selectedRowIndexes == IndexSet(integer: r),
+           tableColumns[c].identifier.rawValue == TableColumnID.fileName.rawValue,
+           window?.firstResponder === self,
+           let cell = view(atColumn: c, row: r, makeIfNecessary: false) as? FileCellView {
+            let text = cell.text
+            let used = text.attributedStringValue.size().width
+            var hit = text.frame
+            hit.size.width = min(hit.width, used + 4)
+            armed = hit.insetBy(dx: -2, dy: -3).contains(cell.convert(event.locationInWindow, from: nil))
+        }
+        super.mouseDown(with: event)   // tracks until mouse up (or a drag begins)
+        if armed, slowRename.isPlainClick(event, in: window), let window {
+            owner?.armSlowRename(row: r)
+            slowRename.cancelWhenWindowResigns(window)
+        }
+    }
+
+    override func rightMouseDown(with event: NSEvent) { slowRename.cancel(); super.rightMouseDown(with: event) }
+    override func resignFirstResponder() -> Bool { slowRename.cancel(); return super.resignFirstResponder() }
+    override func scrollWheel(with event: NSEvent) { slowRename.cancel(); super.scrollWheel(with: event) }
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        slowRename.cancel()
         let p = convert(event.locationInWindow, from: nil)
         return owner?.menuFor(row: row(at: p))
     }
 
     override func keyDown(with event: NSEvent) {
+        slowRename.cancel()
         if let owner, let host = owner.host, host.handleKey(event) { return }
         if event.charactersIgnoringModifiers == "=" && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty && !(owner?.archiveMode ?? true) {
             owner?.calculateSelectedSizes(); return
