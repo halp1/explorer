@@ -39,6 +39,29 @@ enum DebugSnapshot {
         case "size":
             let wh = arg.split(separator: "x").compactMap { Double($0) }
             if wh.count == 2, let w = c.window { var f = w.frame; f.size = NSSize(width: wh[0], height: wh[1]); w.setFrame(f, display: true) }
+        case "dumprows":
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                guard let t = c.window?.contentView?.descendants(of: NSTableView.self).first else { return }
+                var out = ""
+                for r in 0..<min(t.numberOfRows, 14) { let f = t.rect(ofRow: r); out += "row \(r) y=\(f.minY) h=\(f.height)\n" }
+                try? out.write(toFile: arg, atomically: true, encoding: .utf8)
+            }
+        case "dumptree":
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                let o = c.tree.outline
+                var out = "insets=\(o.enclosingScrollView?.contentInsets as Any) clip=\(o.enclosingScrollView?.contentView.bounds as Any) style=\(o.selectionHighlightStyle.rawValue)\n"
+                out += "outline=\(o.frame) col=\(o.tableColumns.first?.width ?? 0) colRect=\(o.rect(ofColumn: 0)) spacing=\(o.intercellSpacing) scroll=\(o.enclosingScrollView?.frame as Any) scroller=\(o.enclosingScrollView?.verticalScroller?.frame as Any) style=\(o.enclosingScrollView?.scrollerStyle.rawValue ?? -1)\n"
+                for r in 0..<min(o.numberOfRows, 40) {
+                    let f = o.rect(ofRow: r)
+                    let n = o.item(atRow: r) as? TreeNode
+                    var extra = ""
+                    if let rv = o.rowView(atRow: r, makeIfNecessary: false) {
+                        extra = " rv=\(rv.frame) sub=\(rv.subviews.map { String(describing: type(of: $0)) + "\($0.frame)" })"
+                    }
+                    out += "row \(r) y=\(f.minY) h=\(f.height) \(n?.title ?? "?")\(extra)\n"
+                }
+                try? out.write(toFile: arg, atomically: true, encoding: .utf8)
+            }
         case "origin":
             let xy = arg.split(separator: "x").compactMap { Double($0) }
             if xy.count == 2, let w = c.window, let scr = w.screen ?? NSScreen.main {
@@ -60,5 +83,14 @@ enum DebugSnapshot {
             let p = windows.count == 1 ? path : path.replacingOccurrences(of: ".png", with: "-\(i).png")
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: p))
         }
+    }
+}
+
+
+extension NSView {
+    func descendants<T: NSView>(of type: T.Type) -> [T] {
+        var out: [T] = []
+        for v in subviews { if let t = v as? T { out.append(t) }; out += v.descendants(of: type) }
+        return out
     }
 }
