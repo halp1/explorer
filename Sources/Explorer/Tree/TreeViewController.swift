@@ -647,6 +647,9 @@ final class TreeCell: NSTableCellView {
     private let label = NSTextField(labelWithString: "")
     private let eject = NSButton()
     private var node: TreeNode?
+    /// The label runs to the cell edge unless the row shows an eject button.
+    private lazy var labelToEdge = label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)
+    private lazy var labelToEject = label.trailingAnchor.constraint(equalTo: eject.leadingAnchor, constant: -4)
 
     init() {
         super.init(frame: .zero)
@@ -666,12 +669,12 @@ final class TreeCell: NSTableCellView {
             icon.widthAnchor.constraint(equalToConstant: 19), icon.heightAnchor.constraint(equalToConstant: 17),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
             label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
-            label.trailingAnchor.constraint(equalTo: eject.leadingAnchor, constant: -4),
             eject.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             eject.centerYAnchor.constraint(equalTo: label.centerYAnchor),
             eject.widthAnchor.constraint(equalToConstant: 16),
         ])
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        labelToEdge.isActive = true
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -703,6 +706,8 @@ final class TreeCell: NSTableCellView {
         if case .share = n.kind { label.textColor = .secondaryLabelColor }
         icon.image = img
         eject.isHidden = !n.ejectable
+        labelToEject.isActive = false; labelToEdge.isActive = false
+        (n.ejectable ? labelToEject : labelToEdge).isActive = true
     }
 
     private var selectedTint: NSColor?
