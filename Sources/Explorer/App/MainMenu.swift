@@ -140,7 +140,7 @@ enum MainMenu {
         m.addItem(i("Show Sidebar", #selector(B.toggleSidebar(_:)), "s", [.command, .option]))
         m.addItem(i("Show Path Bar", #selector(B.togglePathBar(_:)), "p", [.command, .option]))
         m.addItem(i("Show Status Bar", #selector(B.toggleStatusBar(_:)), "/"))
-        m.addItem(i("Show Action Toolbar", #selector(B.toggleActionBar(_:)), "/", [.command, .option]))
+        m.addItem(i("Show Action Bar", #selector(B.toggleActionBar(_:)), "/", [.command, .option]))
         m.addItem(i("Show Shelf", #selector(B.toggleShelf(_:))))
         m.addItem(.separator())
         m.addItem(i("Show Hidden Files", #selector(B.toggleHidden(_:)), "."))

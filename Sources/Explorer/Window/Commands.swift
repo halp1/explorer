@@ -110,7 +110,7 @@ extension BrowserWindowController {
         case #selector(toggleStatusBar(_:)):
             item.title = state.prefs.showStatusBar ? "Hide Status Bar" : "Show Status Bar"; return true
         case #selector(toggleActionBar(_:)):
-            item.title = state.prefs.showActionToolbar ? "Hide Action Toolbar" : "Show Action Toolbar"; return true
+            item.title = state.prefs.showActionToolbar ? "Hide Action Bar" : "Show Action Bar"; return true
         case #selector(toggleTimeInDates(_:)):
             item.title = state.prefs.showTimeInDates ? "Hide Time in Dates" : "Show Time in Dates"; return true
         case #selector(toggleArchivesInTree(_:)):

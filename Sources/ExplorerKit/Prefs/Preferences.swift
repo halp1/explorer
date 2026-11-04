@@ -211,7 +211,7 @@ public final class Preferences: ObservableObject {
     public var showSidebar: Bool { get { get("showSidebar", true) } set { set("showSidebar", newValue) } }
     public var showPathBar: Bool { get { get("showPathBar", true) } set { set("showPathBar", newValue) } }
     public var showStatusBar: Bool { get { get("showStatusBar", true) } set { set("showStatusBar", newValue) } }
-    public var showActionToolbar: Bool { get { get("showActionToolbar", true) } set { set("showActionToolbar", newValue) } }
+    public var showActionToolbar: Bool { get { get("showActionToolbar", false) } set { set("showActionToolbar", newValue) } }
 
     // MARK: Default view options (when a folder has none remembered)
     public var defaultViewOptions: ViewOptions { get { getJSON("defaultViewOptions", ViewOptions()) } set { setJSON("defaultViewOptions", newValue) } }

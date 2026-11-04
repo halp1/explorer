@@ -98,6 +98,7 @@ struct GeneralSettings: View {
             Picker("Path Bar position:", selection: pref({ p.pathBarPosition }, { p.pathBarPosition = $0 })) {
                 Text("At the bottom").tag(PathBarPosition.bottom); Text("At the top").tag(PathBarPosition.top)
             }
+            Toggle("Show Action Bar", isOn: pref({ p.showActionToolbar }, { p.showActionToolbar = $0 }))
             Toggle("Show Shelf", isOn: pref({ p.showShelf }, { p.showShelf = $0 }))
             Picker("Pressing return:", selection: pref({ p.returnAction }, { p.returnAction = $0 })) {
                 Text("Open").tag(ReturnAction.open); Text("Rename").tag(ReturnAction.rename)

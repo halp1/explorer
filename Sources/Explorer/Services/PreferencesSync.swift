@@ -10,7 +10,7 @@ final class PreferencesSync {
 
     /// Keys worth syncing (UI settings, not per-machine state).
     static let keys = [
-        "appearance", "themeColor", "fontSizeDelta", "sounds", "pathBarStyle", "pathBarPosition", "showShelf", "returnAction",
+        "appearance", "themeColor", "fontSizeDelta", "sounds", "pathBarStyle", "pathBarPosition", "showShelf", "showActionToolbar", "returnAction",
         "backWithDelete", "trashWithDelete", "cutViaTrash", "internalCutForCloud", "usePrivateTrash3", "dragBehavior", "linking",
         "openArchives", "inheritViewOptions", "autoQuit", "reorderFavorites", "showTextTags", "recentDays", "treeSpacing",
         "boldTopLevel", "truncateFolders", "showIndentGuides", "showCustomFolderIcons", "showFolderLabelColor", "foldersInheritColor",
