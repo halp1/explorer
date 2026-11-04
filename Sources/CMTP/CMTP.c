@@ -143,6 +143,10 @@ void cmtp_close(CMTPDevice *d) {
 }
 char *cmtp_name(CMTPDevice *d) {
     char *name = d->context->Get_Friendlyname(d->device);
+    if (name && name[0] == '\0') {
+        free(name);
+        name = NULL;
+    }
     if (!name) name = d->context->Get_Modelname(d->device);
     return name;
 }

@@ -52,7 +52,7 @@ The reference is `/Applications/Folders Pro.app` (com.minttype.folders-pro 2.11.
 | Actions (shell / AppleScript, {path} {name} {stem} {dir}) | ✅ |
 | CLI `explorer`, URL schemes, Services, AppleScript sdef, App Intents | ✅ (parsing) / 🟡 install |
 | iOS devices over AFC (libimobiledevice loaded at runtime) | 🟡 needs `brew install libimobiledevice` |
-| USB MTP devices: storage browsing, copy, mkdir, rename, permanent delete | 🟡 needs `brew install libmtp`, hardware validation pending. See [MTP support](MTP.md). |
+| USB MTP devices: storage browsing, copy, mkdir, rename, permanent delete | 🟡 needs `brew install libmtp`. Pixel 9a read-only browsing verified, physical write/transfer checks pending. See [MTP support](MTP.md). |
 | iCloud settings sync | 🟡 needs iCloud entitlement |
 | Settings: 6 tabs with the guide's defaults | ✅ rendered |
 

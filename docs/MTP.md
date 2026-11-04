@@ -45,3 +45,13 @@ Device search, cut/move, device-to-device transfers, automatic edit upload, POSI
 The test suite uses an injected transport to cover connection-scoped handles, storage and object identity, listing failures, transfer collisions, unsafe names, cancellation, symlink rejection, and partial-transfer cleanup. These tests do not simulate or prove USB compatibility with every device.
 
 Physical-device checks remain necessary for storage discovery, internal storage and SD cards, recursive round-trip copies, file promises, preview downloads, cancellation, read-only storage, and unplug/reconnect during transfer. Record actual hardware results separately from automated test results.
+
+On 2026-11-03, a Pixel 9a using Homebrew libmtp 1.1.23 passed read-only native discovery, device-name fallback, storage listing, and nested folder listing. It exposed one storage with 17 top-level items. No device content was uploaded, renamed, or deleted. Write operations, transfers, and disconnect recovery remain unverified on physical hardware.
+
+To repeat the opt-in, read-only hardware check with an unlocked device in File Transfer mode, close other MTP clients including Explorer, then run:
+
+```sh
+EXPLORER_MTP_HARDWARE_TEST=1 swift test --disable-sandbox --filter MTPHardwareTests
+```
+
+The hardware check is skipped during normal test runs.

@@ -118,7 +118,8 @@ final class NativeMTPTransport: MTPTransport {
         for (key, fallback) in candidates {
             if opened[key] == nil, let handle = cmtp_open(context, key) {
                 let rawName = cmtp_name(handle)
-                let name = rawName.map { String(cString: $0) } ?? fallback
+                let reportedName = rawName.map { String(cString: $0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+                let name = reportedName.isEmpty ? fallback : reportedName
                 cmtp_free(rawName)
                 let rawSerial = cmtp_serial(handle)
                 let serial = rawSerial.map { String(cString: $0) } ?? ""
