@@ -57,6 +57,7 @@ enum DebugSnapshot {
                     var extra = ""
                     if let rv = o.rowView(atRow: r, makeIfNecessary: false) {
                         extra = " rv=\(rv.frame) sub=\(rv.subviews.map { String(describing: type(of: $0)) + "\($0.frame)" })"
+                        if let cell = rv.subviews.first(where: { $0 is TreeCell }) { extra += " cellsub=\(cell.subviews.map { String(describing: type(of: $0)) + "\($0.frame)\($0.isHidden ? "h" : "")" })" }
                     }
                     let lvl = o.level(forRow: r)
                     out += "row \(r) lvl=\(lvl) \(o.selectedRowIndexes.contains(r) ? "SELECTED " : "")y=\(f.minY) h=\(f.height) \(n?.title ?? "?")\(extra)\n"
