@@ -49,7 +49,7 @@ public struct SidebarSection: Codable, Hashable, Identifiable, Sendable {
     public var expandedByDefault: Bool?
 
     public static let defaults: [SidebarSection] = [
-        .init(id: "favorites", label: "Favorites", colorIndex: 7, icon: "star", disabled: false, expandedByDefault: false),
+        .init(id: "favorites", label: "Favorites", colorIndex: 7, icon: "star", disabled: false, expandedByDefault: true),
         .init(id: "home", label: "Home", colorIndex: 0, icon: "house", disabled: false, expandedByDefault: true),
         .init(id: "hd", label: "Hard drives", colorIndex: 0, icon: "internaldrive", disabled: false, expandedByDefault: false),
         .init(id: "ed", label: "External drives", colorIndex: 0, icon: "externaldrive", disabled: false, expandedByDefault: false),
