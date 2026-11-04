@@ -112,6 +112,9 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
             if case .mtp = n.kind, n.children != nil, !n.isLoading, n.loadError == nil { loadedMTP[n.identity] = n }
         }
         roots = TreeBuilder.sections(network: network)
+        if let f = favoriteContext {
+            favoriteContext = roots.first(where: \.isFavoritesSection)?.children?.first { $0.identity == f.identity }
+        }
         for r in roots {
             if case .mtp = r.kind, r.loadError == nil, let old = loadedMTP[r.identity] {
                 r.children = old.children
@@ -259,18 +262,27 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
             return allLoaded().first { $0.location == loc }
         case .directory(let u):
             let path = u.standardizedFileURL.resolvingSymlinksInPath().path
-            // Best root: the deepest folder node that is an ancestor of path (prefer Favorites/Home order of sections)
-            var best: TreeNode?
-            var bestLen = -1
-            // Candidate roots: top-level folder nodes (e.g. Home) and folder children of sections (Favorites, drives).
-            for section in roots {
-                for c in [section] + (section.children ?? []) {
-                    guard let cu = c.url, c.location != nil else { continue }
-                    let cp = cu.standardizedFileURL.resolvingSymlinksInPath().path
-                    if path == cp || path.hasPrefix(cp == "/" ? "/" : cp + "/"), cp.count > bestLen {
-                        best = c; bestLen = cp.count
+            func contains(_ c: TreeNode) -> Int? {
+                guard let cu = c.url, c.location != nil else { return nil }
+                let cp = cu.standardizedFileURL.resolvingSymlinksInPath().path
+                return path == cp || path.hasPrefix(cp == "/" ? "/" : cp + "/") ? cp.count : nil
+            }
+            // Favorites only own the selection while browsing inside the favorite that was clicked in the tree.
+            // Everything else resolves in the main tree (Home, drives, cloud folders).
+            if let f = favoriteContext, contains(f) == nil { favoriteContext = nil }
+            var best: TreeNode? = favoriteContext
+            if best == nil {
+                var bestLen = -1
+                for section in roots where !section.isFavoritesSection {
+                    for c in [section] + (section.children ?? []) {
+                        if let len = contains(c), len > bestLen { best = c; bestLen = len }
                     }
                 }
+            }
+            // Nothing in the main tree holds it (e.g. Home is hidden): fall back to a matching favorite.
+            if best == nil {
+                best = roots.first(where: \.isFavoritesSection)?.children?
+                    .compactMap { c in contains(c).map { (c, $0) } }.max { $0.1 < $1.1 }?.0
             }
             guard var node = best else { return nil }
             let autoExpand = Preferences.shared.autoExpandTree
@@ -443,8 +455,14 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
         }
     }
 
+    /// The Favorites entry the user last clicked into (or below). Cleared by navigating outside it.
+    private var favoriteContext: TreeNode?
+
     private func selectRow(_ row: Int) {
         guard row >= 0, let n = outline.item(atRow: row) as? TreeNode else { return }
+        var top = n
+        while let p = top.parent, !p.isFavoritesSection { top = p }
+        favoriteContext = top.parent?.isFavoritesSection == true ? top : nil
         switch n.kind {
         case .share(let s):
             if let u = URL(string: s.url) { host?.mountShare(u) }
