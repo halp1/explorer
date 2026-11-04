@@ -9,6 +9,9 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
     weak var host: BrowserWindowController?
     private let control = NSPathControl()   // kept for its click/menu behaviour on string-mode fallback
     private let crumbs = NSStackView()
+    /// Clips the crumbs. A long path keeps the current folder visible and cuts off its start, like Folders Pro,
+    /// instead of widening the window.
+    private let crumbClip = NSView()
     private let field = NSTextField()
     private let suggestions = PathSuggestions()
     private var editing = false
@@ -31,18 +34,34 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
         field.delegate = self
         field.focusRingType = .none
         field.lineBreakMode = .byTruncatingHead
+        // A long path must truncate, never push the window wider.
+        field.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+        control.setContentCompressionResistancePriority(.init(1), for: .horizontal)
         field.cell?.usesSingleLineMode = true
         let sep = NSBox(); sep.boxType = .separator
         crumbs.orientation = .horizontal
         crumbs.spacing = 4
         crumbs.alignment = .centerY
         crumbs.setHuggingPriority(.required, for: .horizontal)
-        crumbs.setContentCompressionResistancePriority(.init(10), for: .horizontal)
-        [control, field, sep, crumbs].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
+        crumbClip.wantsLayer = true
+        crumbClip.layer?.masksToBounds = true
+        if #available(macOS 14.0, *) { crumbClip.clipsToBounds = true }
+        [control, field, sep, crumbClip].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
+        crumbs.translatesAutoresizingMaskIntoConstraints = false
+        crumbClip.addSubview(crumbs)
+        // Left-aligned while the path fits. Once it does not, the trailing edge wins and the start is clipped.
+        let preferLeading = crumbs.leadingAnchor.constraint(equalTo: crumbClip.leadingAnchor)
+        // Below fitting-size compression (50) so the path never sets a minimum width for the window or split view.
+        preferLeading.priority = .init(10)
         NSLayoutConstraint.activate([
-            crumbs.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            crumbs.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
-            crumbs.centerYAnchor.constraint(equalTo: centerYAnchor),
+            crumbClip.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            crumbClip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            crumbClip.topAnchor.constraint(equalTo: topAnchor),
+            crumbClip.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+            crumbs.leadingAnchor.constraint(lessThanOrEqualTo: crumbClip.leadingAnchor),
+            crumbs.trailingAnchor.constraint(lessThanOrEqualTo: crumbClip.trailingAnchor),
+            preferLeading,
+            crumbs.centerYAnchor.constraint(equalTo: crumbClip.centerYAnchor),
         ])
         control.isHidden = true
         NSLayoutConstraint.activate([
@@ -64,7 +83,7 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
         guard let st = host?.state else { return }
         let interactive = Preferences.shared.pathBarStyle == .interactive && !editing
         control.isHidden = true
-        crumbs.isHidden = !interactive
+        crumbClip.isHidden = !interactive
         field.isHidden = interactive
         field.isEditable = editing
         if let address = st.mtpLocation {
@@ -86,7 +105,7 @@ final class PathBarView: NSView, NSPathControlDelegate, NSTextFieldDelegate {
             control.url = nil
             field.stringValue = st.title
         }
-        if !interactive && !editing { field.isHidden = false; crumbs.isHidden = true }
+        if !interactive && !editing { field.isHidden = false; crumbClip.isHidden = true }
     }
 
     /// Path items from the volume root down, with a trailing chevron item (Folders Pro shows "›" after the last component).
