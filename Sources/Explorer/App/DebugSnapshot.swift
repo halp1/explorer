@@ -62,6 +62,56 @@ enum DebugSnapshot {
                 }
                 try? out.write(toFile: arg, atomically: true, encoding: .utf8)
             }
+        case "click", "dclick":
+            // "click:name,dx" sends a mouse down/up to the file table at dx points into the named item's name column.
+            let parts = arg.split(separator: ",").map(String.init)
+            guard parts.count == 2, let dx = Double(parts[1]), let w = c.window,
+                  let t = w.contentView?.descendants(of: FileTableView.self).first,
+                  let row = (0..<t.numberOfRows).first(where: { t.owner?.item(at: $0)?.name == parts[0] }) else { return }
+            let v = [Double(row), dx]
+            NSApp.activate(ignoringOtherApps: true)
+            w.makeKeyAndOrderFront(nil)
+            if w.firstResponder !== t { w.makeFirstResponder(t) }
+            let rr = t.rect(ofRow: row)
+            let col = t.rect(ofColumn: max(0, t.column(withIdentifier: .init(TableColumnID.fileName.rawValue))))
+            let p = t.convert(NSPoint(x: col.minX + v[1], y: rr.midY), to: nil)
+            let now = ProcessInfo.processInfo.systemUptime
+            let up = NSEvent.mouseEvent(with: .leftMouseUp, location: p, modifierFlags: [], timestamp: now, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 0)!
+            let down = NSEvent.mouseEvent(with: .leftMouseDown, location: p, modifierFlags: [], timestamp: now, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            // The table tracks the press in a nested loop that dequeues the queued mouse up.
+            NSApp.postEvent(up, atStart: false)
+            w.sendEvent(down)
+            if step.hasPrefix("dclick") {
+                // Second press of a double click, sent right after the first.
+                let up2 = NSEvent.mouseEvent(with: .leftMouseUp, location: p, modifierFlags: [], timestamp: now + 0.1, windowNumber: w.windowNumber, context: nil, eventNumber: 1, clickCount: 2, pressure: 0)!
+                let down2 = NSEvent.mouseEvent(with: .leftMouseDown, location: p, modifierFlags: [], timestamp: now + 0.1, windowNumber: w.windowNumber, context: nil, eventNumber: 1, clickCount: 2, pressure: 1)!
+                NSApp.postEvent(up2, atStart: false)
+                w.sendEvent(down2)
+            }
+        case "hit":
+            // "hit:/path" records which view receives a click on the first row's name.
+            guard let w = c.window, let t = w.contentView?.descendants(of: FileTableView.self).first else { return }
+            let rr = t.rect(ofRow: 0)
+            let p = t.convert(NSPoint(x: 60, y: rr.midY), to: nil)
+            var v = w.contentView?.superview?.hitTest(p)
+            var chain: [String] = []
+            while let x = v { chain.append(String(describing: type(of: x))); v = x.superview }
+            try? chain.joined(separator: " < ").write(toFile: arg, atomically: true, encoding: .utf8)
+        case "type":
+            // "type:text" replaces the field editor's selection and presses Return.
+            if let ed = c.window?.firstResponder as? NSTextView, ed.isFieldEditor {
+                ed.insertText(arg, replacementRange: ed.selectedRange())
+                ed.insertNewline(nil)
+            }
+        case "where":
+            try? (c.state.location.url?.path ?? "?").write(toFile: arg, atomically: true, encoding: .utf8)
+        case "editor":
+            // "editor:/path" writes the field editor's text and selected range, or "none".
+            var out = "none"
+            if let ed = c.window?.firstResponder as? NSTextView, ed.isFieldEditor {
+                out = "\(ed.string)|\(ed.selectedRange().location),\(ed.selectedRange().length)"
+            }
+            try? out.write(toFile: arg, atomically: true, encoding: .utf8)
         case "origin":
             let xy = arg.split(separator: "x").compactMap { Double($0) }
             if xy.count == 2, let w = c.window, let scr = w.screen ?? NSScreen.main {
