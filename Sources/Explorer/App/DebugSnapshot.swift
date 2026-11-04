@@ -58,7 +58,8 @@ enum DebugSnapshot {
                     if let rv = o.rowView(atRow: r, makeIfNecessary: false) {
                         extra = " rv=\(rv.frame) sub=\(rv.subviews.map { String(describing: type(of: $0)) + "\($0.frame)" })"
                     }
-                    out += "row \(r) y=\(f.minY) h=\(f.height) \(n?.title ?? "?")\(extra)\n"
+                    let lvl = o.level(forRow: r)
+                    out += "row \(r) lvl=\(lvl) \(o.selectedRowIndexes.contains(r) ? "SELECTED " : "")y=\(f.minY) h=\(f.height) \(n?.title ?? "?")\(extra)\n"
                 }
                 try? out.write(toFile: arg, atomically: true, encoding: .utf8)
             }
@@ -103,6 +104,22 @@ enum DebugSnapshot {
                 ed.insertText(arg, replacementRange: ed.selectedRange())
                 ed.insertNewline(nil)
             }
+        case "fitting":
+            // "fitting:/path" writes the fitting width of each top-level split item and the main stack's views.
+            guard let w = c.window, let root = w.contentView else { return }
+            var out = "window=\(w.frame.size) content=\(root.frame.size)\n"
+            for v in root.descendants(of: NSStackView.self).prefix(4) {
+                out += "stack \(v.frame.size) fit=\(v.fittingSize)\n"
+                for a in v.arrangedSubviews { out += "  \(type(of: a)) \(a.frame.size) fit=\(a.fittingSize)\n" }
+            }
+            try? out.write(toFile: arg, atomically: true, encoding: .utf8)
+        case "treeclick":
+            // "treeclick:N" selects the Nth row titled like the given name ("Downloads#0" = first match).
+            let parts = arg.split(separator: "#").map(String.init)
+            let o = c.tree.outline
+            let rows = (0..<o.numberOfRows).filter { (o.item(atRow: $0) as? TreeNode)?.title == parts[0] }
+            let k = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            if rows.indices.contains(k) { o.selectRowIndexes([rows[k]], byExtendingSelection: false) }
         case "where":
             try? (c.state.location.url?.path ?? "?").write(toFile: arg, atomically: true, encoding: .utf8)
         case "editor":
