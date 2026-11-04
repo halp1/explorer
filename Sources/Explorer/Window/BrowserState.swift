@@ -344,20 +344,10 @@ final class BrowserState: ObservableObject {
             if let s = folderSizes[list[i].url.path] { list[i].size = s }
         }
         let sorted = Sorter.sort(list, by: options.sortKey, order: options.sortOrder, folders: options.folders)
-        items = sorted
-        if options.grouping != .none && options.grouping != .kind && options.folders != .mixed {
-            // Folders first/last: folders get their own group instead of being bucketed by date/size/…
-            let folders = sorted.filter(\.isFolder), files = sorted.filter { !$0.isFolder }
-            var g = Sorter.group(files, by: options.grouping)
-            if !folders.isEmpty {
-                let fg = ItemGroup(id: "folders", title: "Folders", order: 0, items: folders)
-                if options.folders == .first { g.insert(fg, at: 0) } else { g.append(fg) }
-            }
-            groups = g
-            items = g.flatMap(\.items)
-        } else {
-            groups = Sorter.group(sorted, by: options.grouping)
-        }
+        // Like Windows Explorer: folders sit in the group their own date/tag/rating puts them in, ordered
+        // first or last within it. Items follow group order so keyboard and range selection match the rows.
+        groups = Sorter.group(sorted, by: options.grouping, folders: options.folders)
+        items = options.grouping == .none ? sorted : groups.flatMap(\.items)
         // Keep selection pointing at fresh values
         let ids = Set(selection.map(\.id))
         if !ids.isEmpty { selection = sorted.filter { ids.contains($0.id) } }

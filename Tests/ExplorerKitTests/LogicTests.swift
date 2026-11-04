@@ -42,6 +42,28 @@ final class SortingTests: XCTestCase {
         XCTAssertEqual(g.last?.title, "Unknown Date")
         XCTAssertTrue(g.contains { $0.title == "2020" })
     }
+
+    /// Regression: grouping used to pull every folder into one "Folders" group at the end. Folders now
+    /// land in their own date bucket and keep the folders-first order inside it.
+    func testFoldersJoinTheirDateGroup() {
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 10, day: 20, hour: 12))!
+        let items = [
+            item("old.txt", mod: cal.date(from: DateComponents(year: 2020, month: 3, day: 1))),
+            item("today.txt", mod: now.addingTimeInterval(-60)),
+            item("OldDir", dir: true, mod: cal.date(from: DateComponents(year: 2020, month: 5, day: 1))),
+            item("TodayDir", dir: true, mod: now.addingTimeInterval(-120)),
+        ]
+        for (placement, today) in [(FolderPlacement.first, ["TodayDir", "today.txt"]), (.last, ["today.txt", "TodayDir"])] {
+            let sorted = Sorter.sort(items, by: .name, order: .ascending, folders: placement)
+            let g = Sorter.group(sorted, by: .dateModified, folders: placement, now: now, calendar: cal)
+            XCTAssertEqual(g.map(\.title), ["Today", "2020"])
+            XCTAssertEqual(g[0].items.map(\.name), today)
+            XCTAssertFalse(g.contains { $0.title == "Folders" })
+        }
+        let sized = Sorter.group(Sorter.sort(items, by: .name, order: .ascending, folders: .last), by: .size, folders: .last)
+        XCTAssertEqual(sized.last?.title, "Folders")
+    }
 }
 
 final class NamingTests: XCTestCase {

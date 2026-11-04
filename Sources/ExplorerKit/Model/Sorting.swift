@@ -124,19 +124,21 @@ public enum Sorter {
 
     // MARK: Grouping
 
-    public static func group(_ items: [FileItem], by key: GroupKey, now: Date = Date(), calendar: Calendar = .current) -> [ItemGroup] {
+    /// Buckets items without reordering them inside a bucket, so a folders-first sort stays folders-first per group.
+    /// `folders: .last` moves the size grouping's own "Folders" bucket (folders have no size) to the end.
+    public static func group(_ items: [FileItem], by key: GroupKey, folders: FolderPlacement = .first, now: Date = Date(), calendar: Calendar = .current) -> [ItemGroup] {
         guard key != .none else { return [ItemGroup(id: "all", title: "", order: 0, items: items)] }
         var buckets: [String: ItemGroup] = [:]
-        var orderOf: [String] = []
         for it in items {
             let (id, title, order) = bucket(for: it, key: key, now: now, calendar: calendar)
             if buckets[id] == nil {
                 buckets[id] = ItemGroup(id: id, title: title, order: order, items: [])
-                orderOf.append(id)
             }
             buckets[id]!.items.append(it)
         }
-        return buckets.values.sorted { $0.order == $1.order ? $0.title.localizedStandardCompare($1.title) == .orderedAscending : $0.order < $1.order }
+        var out = buckets.values.sorted { $0.order == $1.order ? $0.title.localizedStandardCompare($1.title) == .orderedAscending : $0.order < $1.order }
+        if folders == .last, let i = out.firstIndex(where: { $0.id == "folders" }) { out.append(out.remove(at: i)) }
+        return out
     }
 
     static func bucket(for it: FileItem, key: GroupKey, now: Date, calendar: Calendar) -> (String, String, Int) {
@@ -186,9 +188,9 @@ public enum Sorter {
         if d >= monthAgo { return ("30", "Previous 30 Days", 3) }
         let comps = cal.dateComponents([.year, .month], from: d)
         let nowYear = cal.component(.year, from: now)
-        if comps.year == nowYear {
-            let f = DateFormatter(); f.calendar = cal; f.setLocalizedDateFormatFromTemplate("MMMM")
-            return ("m\(comps.month!)", f.string(from: d), 100 - (comps.month ?? 0))
+        if comps.year == nowYear, let m = comps.month {
+            // A DateFormatter per item made large folders slow to group.
+            return ("m\(m)", cal.standaloneMonthSymbols[m - 1], 100 - m)
         }
         return ("y\(comps.year!)", String(comps.year!), 1000 + (9999 - (comps.year ?? 0)))
     }
