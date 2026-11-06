@@ -8,14 +8,32 @@ final class FileOps: ObservableObject {
 
     @Published private(set) var running: [FileOperation] = []
     let history = UndoHistory()
-    let prefs = Preferences.shared
+    let prefs: Preferences
+    private let trashOverride: Trasher?
+
+    init(preferences: Preferences = .shared, trasher: Trasher? = nil) {
+        prefs = preferences
+        trashOverride = trasher
+    }
 
     /// Internal (Explorer-style) cut: items waiting to be moved on paste.
     @Published private(set) var internalCut: [URL] = []
     /// Cut via Trash: original → location in trash, plus the pasteboard change count we wrote.
     private var cutViaTrash: (pairs: [MovePair], changeCount: Int)?
+    private var pendingUndoOperation: UUID?
+    private weak var pendingUndoWindow: NSWindow?
 
-    var trasher: Trasher { Trasher(allowPrivateTrash: prefs.usePrivateTrash) }
+    var undoTitle: String? {
+        if running.count == 1, running[0].kind != .delete { return running[0].kind.undoTitle }
+        return history.undoTitle
+    }
+    var canUndo: Bool {
+        if !running.isEmpty { return running.count == 1 && running[0].kind != .delete && pendingUndoOperation == nil }
+        return history.undoTitle != nil
+    }
+    var canRedo: Bool { running.isEmpty && history.redoTitle != nil }
+
+    var trasher: Trasher { trashOverride ?? Trasher(allowPrivateTrash: prefs.usePrivateTrash) }
 
     @discardableResult
     private func admit(_ urls: [URL], window: NSWindow?) -> Bool {
@@ -47,7 +65,7 @@ final class FileOps: ObservableObject {
             self.running.removeAll { $0 === op }
             self.history.record(title ?? kind.undoTitle, op.undo)
             switch op.state {
-            case .done: Sounds.play(kind == .trash || kind == .delete ? .trash : .done)
+            case .done where kind != .trash && kind != .delete: Sounds.play(.done)
             default: break
             }
             // Folder rows for removed or moved sources must go away immediately, even when FSEvents lags.
@@ -61,6 +79,15 @@ final class FileOps: ObservableObject {
             default: break
             }
             completion?(op)
+            if self.pendingUndoOperation == op.id {
+                let undoWindow = self.pendingUndoWindow
+                self.pendingUndoOperation = nil
+                self.pendingUndoWindow = nil
+                if self.running.isEmpty, op.undo != nil { self.undo(window: undoWindow) }
+                else if !self.running.isEmpty {
+                    Alerts.info("Undo Not Applied", "Another file operation is still running. Wait for it to finish, then undo.", window: undoWindow)
+                }
+            }
         }
         running.append(op)
         op.start()
@@ -91,7 +118,8 @@ final class FileOps: ObservableObject {
             a.informativeText = e.localizedDescription
             a.addButton(withTitle: "Skip")
             a.addButton(withTitle: "Cancel")
-            if permission { a.addButton(withTitle: "Retry as Administrator") }
+            // Privileged removal is irreversible and must never be used to retry Move to Trash.
+            if permission && kind == .delete { a.addButton(withTitle: "Retry as Administrator") }
             let r = a.runModal()
             switch r {
             case .alertFirstButtonReturn: result = true
@@ -107,7 +135,7 @@ final class FileOps: ObservableObject {
     private func retryPrivileged(_ kind: FileOperationKind, _ item: URL, window: NSWindow?) {
         let ops: [Privileged.Op]
         switch kind {
-        case .delete, .trash: ops = [.remove(item.path)]
+        case .delete: ops = [.remove(item.path)]
         default: return
         }
         Privileged.shared.run(ops) { e in
@@ -118,13 +146,41 @@ final class FileOps: ObservableObject {
     // MARK: Undo / Redo
 
     func undo(window: NSWindow?) {
-        do { try history.undo(trash: trasher); Sounds.play(.done) }
-        catch { Alerts.error("Error while undoing", error.localizedDescription, window: window) }
+        if !running.isEmpty {
+            guard canUndo else { return }
+            pendingUndoOperation = running[0].id
+            pendingUndoWindow = window
+            return
+        }
+        do {
+            guard let action = try history.undo(trash: trasher) else { return }
+            refreshAfterHistoryChange(action)
+        } catch { Alerts.error("Error while undoing", error.localizedDescription, window: window) }
     }
 
     func redo(window: NSWindow?) {
-        do { try history.redo(trash: trasher) }
-        catch { Alerts.error("Error while undoing", error.localizedDescription, window: window) }
+        guard running.isEmpty else { return }
+        do {
+            guard let action = try history.redo(trash: trasher) else { return }
+            refreshAfterHistoryChange(action)
+        } catch { Alerts.error("Error while redoing", error.localizedDescription, window: window) }
+    }
+
+    private func refreshAfterHistoryChange(_ action: UndoAction) {
+        let affected = action.affectedURLs
+        NotificationCenter.default.post(name: .treeFilesChanged, object: nil, userInfo: ["urls": affected])
+        for browser in BrowserWindowController.all where !browser.state.isDevice {
+            if let directory = browser.state.currentDirectory, browser.state.location.isFileSystem {
+                let restored = affected.filter {
+                    $0.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL &&
+                        FileNaming.defaultExists($0)
+                }
+                if !restored.isEmpty { browser.state.pendingSelection = restored }
+            }
+            if browser.state.isArchive { browser.state.reloadArchive() }
+            else if browser.state.location.isFileSystem || browser.state.isTrash { browser.state.softReload() }
+            else { browser.state.reload() }
+        }
     }
 
     // MARK: Trash / Delete

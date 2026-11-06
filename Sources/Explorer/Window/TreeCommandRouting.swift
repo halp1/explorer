@@ -67,8 +67,8 @@ extension BrowserWindowController {
 
     /// Returns true even when unavailable, so a tree command never falls back to file selection.
     @discardableResult
-    func routeTreeKeyboardCommand(_ action: Selector) -> Bool {
-        guard hasTreeFocus else { return false }
+    func routeTreeKeyboardCommand(_ action: Selector, sender: Any?) -> Bool {
+        guard hasTreeFocus, (sender as? NSMenuItem)?.isFileContextCommand != true else { return false }
         if let item = treeKeyboardItem(for: action), let mapped = item.action {
             _ = NSApp.sendAction(mapped, to: self, from: item)
         }

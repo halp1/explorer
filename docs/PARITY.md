@@ -28,7 +28,7 @@ The keyboard reference is [Folders Pro](</Applications/Folders Pro.app>) (com.mi
 - Tree shortcuts target the selected node, not retained file-view selection. Option-number shortcuts count only visible unselectable top-level groups. Option-arrow navigation expands groups, skips empty groups, and stops at boundaries.
 - Show All Tabs is explicitly registered on Shift-Command-backslash using native window tab overview.
 - Text editors retain Command-arrow and Command-Delete behavior. Unsupported tree file actions are disabled rather than applied to stale selection.
-- Regression coverage includes resolver branches, modifier rejection, editor/menu protection, tree planning, actual Gallery responder navigation, and Command-Down through every file view. `make test` passed with 11 app tests and 70 core tests, including one skipped hardware-only MTP test.
+- Regression coverage includes resolver branches, modifier rejection, editor/menu protection, tree planning, actual Gallery responder navigation, Command-Down and explicit file-popup scope through every file view, real private-trash deletion with menu Undo/Redo, immediate queued Undo, and text-editor undo isolation. `make test` passed with 15 app tests and 79 core tests, including one skipped hardware-only MTP test.
 - Scope exclusion: Shift-Command-K Remote Connections is not registered. Explorer has no SFTP, FTP, FTPS, or S3 backend. No placeholder command is presented.
 - Verification limit: not every OS dialog, non-QWERTY keyboard layout, physical-device operation, or full menu-driven workflow has been exercised end-to-end. RTL command resolution is unit-tested, not tested with a live RTL system session.
 
@@ -37,14 +37,18 @@ The keyboard reference is [Folders Pro](</Applications/Folders Pro.app>) (com.mi
 |---|---|---|
 | Copy/move with progress, pause, cancel | ✅ | unit tests |
 | Conflicts: Skip / Keep Both / Replace / Replace Older / Merge, Apply to All | ✅ | unit tests |
-| Undo/redo of every op (incl. swaps) | ✅ | unit tests |
+| Undo/redo, including swaps and multi-item deletion | ✅ | Explicit menu target preserves editor undo. Failed built-in actions retain history and roll back partial moves. Custom closures must be atomic on failure. |
 | Trash plus private trash fallback | ✅ | |
 | Cut via Trash / internal cut / cloud rule / clipboard-replaced warning | 🟡 | |
 | Paste as symlinks/aliases, Paste into Folder, Move Item Here | ✅ (core) | |
 | New folder / with selection / empty file / Office docs / from clipboard / via scriptable apps | ✅ (templates tested) | |
 | Batch Rename (7 step types, preview, collisions) | ✅ | unit tests |
 | Drag & drop with ⌥/⌘/⌃ rules | 🟡 | |
-| Retry as Administrator (SMAppService helper → osascript fallback) | 🟡 | needs a team-signed build for the daemon path |
+| Retry as Administrator (SMAppService helper → osascript fallback) | 🟡 | Only explicit permanent deletion may retry with privileged removal. Move to Trash must never become irreversible removal. The daemon path needs a team-signed build. |
+
+Deletion is silent. Other operation sounds default to off and remain opt-in through Settings.
+
+Undo history is session-local. Files deleted before an app restart must be restored from system Trash or a preserved private-trash backup, not the new session's undo stack.
 
 ## Archives
 | Feature | Status |

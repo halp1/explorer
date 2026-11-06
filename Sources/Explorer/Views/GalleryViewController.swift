@@ -93,6 +93,21 @@ final class GalleryViewController: NSViewController, FileViewing, CollectionKeyb
         applyKeyboardSelection(IndexSet(integer: indexPath.item), anchor: indexPath.item, head: indexPath.item)
     }
 
+    func menuFor(_ indexPath: IndexPath?) -> NSMenu? {
+        if let indexPath, items.indices.contains(indexPath.item) {
+            if !strip.selectionIndexPaths.contains(indexPath) { selectForKeyboard(indexPath) }
+        } else {
+            strip.deselectAll(nil)
+            changed()
+        }
+        return host?.contextMenu(for: state.selection, inTree: false)
+    }
+
+    func doubleClicked(_ indexPath: IndexPath) {
+        guard items.indices.contains(indexPath.item) else { return }
+        host?.open([items[indexPath.item]], newWindow: false)
+    }
+
     /// NSCollectionView retains a private navigation anchor after programmatic selection changes.
     /// Gallery has a one-dimensional strip, so resolve its range from the current model instead.
     func moveKeyboardSelection(_ direction: Int, extending: Bool) {

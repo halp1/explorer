@@ -252,7 +252,7 @@ class FileCollectionView: NSCollectionView {
     override func menu(for event: NSEvent) -> NSMenu? {
         slowRename.cancel()
         let ip = indexPathForItem(at: convert(event.locationInWindow, from: nil))
-        return owner?.menuFor(ip)
+        return keyboardInput?.menuFor(ip)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -265,7 +265,7 @@ class FileCollectionView: NSCollectionView {
             armed = ci.nameField.frame.contains(ci.view.convert(event.locationInWindow, from: nil))
         }
         super.mouseDown(with: event)
-        if event.clickCount == 2, let ip { owner?.doubleClicked(ip) }
+        if event.clickCount == 2, let ip { keyboardInput?.doubleClicked(ip) }
         if armed, let ip, slowRename.isPlainClick(event, in: window), let window {
             owner?.armSlowRename(ip)
             slowRename.cancelWhenWindowResigns(window)

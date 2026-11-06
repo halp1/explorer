@@ -30,11 +30,13 @@ extension FileViewing {
     }
 }
 
-/// Keyboard-only input shared by the grouped collection views and Gallery's thumbnail strip.
+/// Item input shared by the grouped collection views and Gallery's thumbnail strip.
 protocol CollectionKeyboardInput: AnyObject {
     var host: BrowserWindowController? { get }
     var flatNames: [(IndexPath, String)] { get }
     func selectForKeyboard(_ indexPath: IndexPath)
+    func menuFor(_ indexPath: IndexPath?) -> NSMenu?
+    func doubleClicked(_ indexPath: IndexPath)
 }
 
 /// Click an already selected item's name again and, after the double-click interval, its name becomes

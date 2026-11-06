@@ -69,7 +69,7 @@ enum Alerts {
 
 /// Short UI sounds: synthesized in-app tones, the system alert sound, or nothing.
 enum Sounds {
-    enum Kind { case done, trash, error, question }
+    enum Kind { case done, error, question }
 
     private static var cache: [Kind: NSSound] = [:]
 
@@ -79,7 +79,6 @@ enum Sounds {
         case .system:
             switch k {
             case .error: NSSound.beep()
-            case .trash: _ = NSSound(named: "Funk")?.play()
             case .done, .question: _ = NSSound(named: "Tink")?.play()
             }
         case .inApp:
@@ -95,7 +94,6 @@ enum Sounds {
         let notes: [(Double, Double)]
         switch k {
         case .done: notes = [(880, 0.07), (1320, 0.12)]
-        case .trash: notes = [(520, 0.06), (330, 0.14)]
         case .error: notes = [(300, 0.10), (240, 0.16)]
         case .question: notes = [(660, 0.08), (880, 0.10)]
         }

@@ -111,10 +111,10 @@ enum MainMenu {
         return m
     }
 
-    static func editMenu() -> NSMenu {
+    static func editMenu(undoTarget: UndoMenuTarget = .shared) -> NSMenu {
         let m = NSMenu(title: "Edit")
-        m.addItem(i("Undo", #selector(B.undo(_:)), "z"))
-        m.addItem(i("Redo", #selector(B.redo(_:)), "z", [.command, .shift]))
+        m.addItem(Menus.item("Undo", #selector(UndoMenuTarget.undo(_:)), "z", target: undoTarget))
+        m.addItem(Menus.item("Redo", #selector(UndoMenuTarget.redo(_:)), "z", [.command, .shift], target: undoTarget))
         m.addItem(.separator())
         m.addItem(i("Cut via Trash", #selector(B.cut(_:)), "x"))
         m.addItem(i("Cut", #selector(B.cutInternal(_:)), "x", [.command, .option], alt: true))

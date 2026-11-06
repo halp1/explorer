@@ -7,7 +7,7 @@ import ExplorerKit
 extension BrowserWindowController {
     var sel: [FileItem] { state.selection }
     var selURLs: [URL] { state.selectedURLs }
-    var ops: FileOps { .shared }
+    var ops: FileOps { operations }
     /// Targets for commands that work on "selection, or current folder when nothing is selected".
     var selOrCurrent: [URL] { selURLs.isEmpty ? (state.currentDirectory.map { [$0] } ?? []) : selURLs }
     var realSelection: [URL] { sel.filter(\.isLocalFile).map(\.url) }
@@ -18,8 +18,17 @@ extension BrowserWindowController {
     // MARK: Validation
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if isEditingText && KeyboardShortcuts.usesFileSelection(item.action) { return false }
-        if let allowed = validateTreeKeyboardCommand(item.action) { return allowed }
+        if !item.isFileContextCommand {
+            if isEditingText && KeyboardShortcuts.usesFileSelection(item.action) { return false }
+            if let allowed = validateTreeKeyboardCommand(item.action) { return allowed }
+        }
+        // File history belongs to completed operations, not the current folder or selection.
+        if item.action == #selector(undo(_:)) || item.action == #selector(redo(_:)) {
+            let isRedo = item.action == #selector(redo(_:))
+            let title = isRedo ? ops.history.redoTitle : ops.undoTitle
+            item.title = title.map { (isRedo ? "Redo " : "Undo ") + $0 } ?? (isRedo ? "Redo" : "Undo")
+            return isRedo ? ops.canRedo : ops.canUndo
+        }
         let hasSel = !sel.isEmpty
         let fs = state.location.isFileSystem
         let writable = state.canWrite
@@ -32,7 +41,7 @@ extension BrowserWindowController {
                  #selector(setRating(_:)), #selector(addTextTag(_:)), #selector(toggleColorTag(_:)), #selector(toggleTextTag(_:)),
                  #selector(revealInFinder(_:)), #selector(openInFinder(_:)), #selector(showInfoInFinder(_:)), #selector(openTerminalHere(_:)), #selector(openTerminalAtSelection(_:)),
                  #selector(toggleFavorite(_:)), #selector(addToShelf(_:)), #selector(runAction(_:)), #selector(revealOriginal(_:)), #selector(showPackageContents(_:)),
-                 #selector(calculateFolderSize(_:)), #selector(calculateAllOnVolume(_:)), #selector(undo(_:)), #selector(redo(_:)),
+                 #selector(calculateFolderSize(_:)), #selector(calculateAllOnVolume(_:)),
                  #selector(downloadNow(_:)), #selector(removeDownload(_:)), #selector(eject(_:)):
                 return false
             default: break
@@ -129,10 +138,6 @@ extension BrowserWindowController {
             return sel.isEmpty ? fs : sel.allSatisfy { $0.isDirectory && $0.archivePath == nil }
         case #selector(setRating(_:)), #selector(addTextTag(_:)), #selector(toggleColorTag(_:)), #selector(toggleTextTag(_:)):
             return !realSelection.isEmpty
-        case #selector(undo(_:)):
-            item.title = ops.history.undoTitle.map { "Undo \($0)" } ?? "Undo"; return ops.history.undoTitle != nil
-        case #selector(redo(_:)):
-            item.title = ops.history.redoTitle.map { "Redo \($0)" } ?? "Redo"; return ops.history.redoTitle != nil
         case #selector(gitCommit(_:)), #selector(gitStageAll(_:)), #selector(gitUnstageAll(_:)), #selector(gitPull(_:)), #selector(gitPush(_:)):
             return state.git != nil
         case #selector(gitStage(_:)), #selector(gitUnstage(_:)), #selector(gitDiscard(_:)):
@@ -172,15 +177,15 @@ extension BrowserWindowController {
     }
 
     @objc func openSelected(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(openSelected(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(openSelected(_:)), sender: sender) else { return }
         open(sel, newWindow: false)
     }
     @objc func openInNewWindow(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(openInNewWindow(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(openInNewWindow(_:)), sender: sender) else { return }
         open(sel, newWindow: true)
     }
     @objc func openInNewTab(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(openInNewTab(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(openInNewTab(_:)), sender: sender) else { return }
         open(sel, newWindow: false, newTab: true)
     }
     @objc func openWithApp(_ sender: NSMenuItem) {
@@ -309,19 +314,11 @@ extension BrowserWindowController {
 
     // MARK: Edit
 
-    @objc func undo(_ sender: Any?) {
-        guard localContext else { return }
-        ops.undo(window: window)
-        state.softReload()
-    }
-    @objc func redo(_ sender: Any?) {
-        guard localContext else { return }
-        ops.redo(window: window)
-        state.softReload()
-    }
+    @objc func undo(_ sender: Any?) { ops.undo(window: window) }
+    @objc func redo(_ sender: Any?) { ops.redo(window: window) }
 
     @objc func copy(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(copy(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(copy(_:)), sender: sender) else { return }
         if !mtpSelection.isEmpty {
             guard mtpSelection.count == sel.count else { return }
             MTPOps.copy(mtpSelection, window: window)
@@ -344,7 +341,7 @@ extension BrowserWindowController {
         ops.copy(selURLs)
     }
     @objc func copyAsPath(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(copyAsPath(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(copyAsPath(_:)), sender: sender) else { return }
         ops.copyPaths(selURLs.isEmpty ? selOrCurrent : selURLs)
     }
     @objc func cut(_ sender: Any?) {
@@ -359,7 +356,7 @@ extension BrowserWindowController {
     }
 
     @objc func paste(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(paste(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(paste(_:)), sender: sender) else { return }
         if let address = state.mtpLocation {
             MTPOps.upload(ops.clipboardURLs, to: address, state: state, window: window)
             return
@@ -379,7 +376,7 @@ extension BrowserWindowController {
         ops.paste(into: dir, mode: .move, window: window) { [weak self] u in self?.state.select(urls: u) }
     }
     @objc func pasteIntoFolder(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(pasteIntoFolder(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(pasteIntoFolder(_:)), sender: sender) else { return }
         guard let f = sel.first, sel.count == 1, f.isDirectory else { return }
         if let address = f.mtpAddress {
             MTPOps.upload(ops.clipboardURLs, to: address, state: state, window: window)
@@ -405,7 +402,7 @@ extension BrowserWindowController {
     // MARK: Destructive
 
     @objc func moveToTrash(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(moveToTrash(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(moveToTrash(_:)), sender: sender) else { return }
         guard !sel.isEmpty else { return }
         if state.mtpLocation != nil || !mtpSelection.isEmpty {
             guard canMutateMTPSelection else { return }
@@ -426,7 +423,7 @@ extension BrowserWindowController {
     }
 
     @objc func deletePermanently(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(deletePermanently(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(deletePermanently(_:)), sender: sender) else { return }
         if state.isDevice || !mtpSelection.isEmpty {
             moveToTrash(sender)
             return
@@ -449,7 +446,7 @@ extension BrowserWindowController {
     }
 
     @objc func eject(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(eject(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(eject(_:)), sender: sender) else { return }
         guard localContext else { return }
         if let v = sel.first, v.isVolume { VolumeOps.eject(v.url, window: window); return }
         if let u = state.location.url, let v = Volumes.volume(containing: u) {
@@ -461,7 +458,7 @@ extension BrowserWindowController {
     // MARK: Rename / duplicate / touch
 
     @objc func renameSelected(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(renameSelected(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(renameSelected(_:)), sender: sender) else { return }
         if state.mtpLocation != nil || !mtpSelection.isEmpty {
             guard sel.count == 1, canMutateMTPSelection else { return }
             renameViaPrompt(sel[0].url)
@@ -600,7 +597,7 @@ extension BrowserWindowController {
     // MARK: Favorites, default & home folders
 
     @objc func toggleFavorite(_ sender: Any?) {
-        guard !routeTreeKeyboardCommand(#selector(toggleFavorite(_:))) else { return }
+        guard !routeTreeKeyboardCommand(#selector(toggleFavorite(_:)), sender: sender) else { return }
         guard localContext else { return }
         let targets = sel.isEmpty ? (state.currentDirectory.map { [$0] } ?? []) : selURLs
         let allFav = targets.allSatisfy(Favorites.contains)
@@ -688,8 +685,8 @@ extension BrowserWindowController {
     // MARK: Shelf
 
     @objc func addToShelf(_ sender: Any?) {
-        guard !isEditingText else { return }
-        guard !routeTreeKeyboardCommand(#selector(addToShelf(_:))) else { return }
+        guard !isEditingText || (sender as? NSMenuItem)?.isFileContextCommand == true else { return }
+        guard !routeTreeKeyboardCommand(#selector(addToShelf(_:)), sender: sender) else { return }
         guard localContext else { return }
         ShelfStore.add(realSelection)
         if !state.prefs.showShelf { state.prefs.showShelf = true; broadcastChrome() }

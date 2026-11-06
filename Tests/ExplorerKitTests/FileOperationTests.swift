@@ -4,7 +4,7 @@ import XCTest
 final class FileOperationTests: XCTestCase {
     func trasher(_ t: TempDir) -> Trasher {
         // Always use a private trash under the temp dir so tests never touch the user's Trash.
-        Trasher(allowPrivateTrash: true, privateTrashRoot: t.dir(".ptrash"))
+        Trasher(allowPrivateTrash: true, privateTrashRoot: t.dir(".ptrash"), useSystemTrash: false)
     }
 
     func run(_ op: FileOperation) -> FileOperation {
@@ -13,6 +13,31 @@ final class FileOperationTests: XCTestCase {
         op.start()
         wait(for: [exp], timeout: 20)
         return op
+    }
+
+    func testCancelledTrashRetainsReceiptsForAlreadyRemovedItems() throws {
+        let t = TempDir()
+        let first = t.file("first.txt", "recover me")
+        let missing = t.url.appendingPathComponent("missing.txt")
+        let last = t.file("last.txt", "not processed")
+        let operation = FileOperation(kind: .trash, sources: [first, missing, last], destination: nil)
+        operation.trasher = trasher(t)
+        operation.errorHandler = { [weak operation] _, _ in
+            operation?.cancel()
+            return true
+        }
+        _ = run(operation)
+        XCTAssertEqual(operation.state, .cancelled)
+        XCTAssertFalse(t.exists("first.txt"))
+        XCTAssertEqual(t.read("last.txt"), "not processed")
+        let history = UndoHistory()
+        history.record("Move to Trash", try XCTUnwrap(operation.undo))
+        try history.undo(trash: trasher(t))
+        XCTAssertEqual(t.read("first.txt"), "recover me")
+        XCTAssertEqual(t.read("last.txt"), "not processed")
+        try history.redo(trash: trasher(t))
+        XCTAssertFalse(t.exists("first.txt"))
+        XCTAssertEqual(t.read("last.txt"), "not processed")
     }
 
     func testCopyAndUndo() throws {

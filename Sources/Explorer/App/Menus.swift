@@ -223,7 +223,7 @@ extension ViewKind {
 extension BrowserWindowController {
     /// Builds the file-view context menu according to the user's layout (Settings › Context Menu).
     func contextMenu(for selection: [FileItem], inTree: Bool) -> NSMenu {
-        let m = NSMenu()
+        let m: NSMenu = inTree ? NSMenu() : FileContextMenu()
         m.autoenablesItems = true
         let hasSel = !selection.isEmpty
         let one = selection.count == 1 ? selection[0] : nil

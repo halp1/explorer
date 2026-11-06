@@ -434,20 +434,19 @@ public final class FileOperation: ObservableObject, Identifiable {
     // MARK: Trash / delete
 
     private func trashAll() throws {
-        var pairs: [MovePair] = []
         for s in sources {
             try checkpoint()
             publish { $0.currentName = s.lastPathComponent }
             do {
                 let t = try trasher.trash(s)
-                pairs.append(MovePair(from: s, to: t))
+                // Record each receipt immediately so cancelling a later item cannot discard it.
+                trashedReplaced.append(MovePair(from: s, to: t))
                 results.append(t)
             } catch {
                 if !reportError(error, s) { break }
             }
             publish { $0.completedItems += 1 }
         }
-        trashedReplaced = pairs
     }
 
     private func deleteAll() throws {

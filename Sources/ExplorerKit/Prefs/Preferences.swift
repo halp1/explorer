@@ -142,7 +142,7 @@ public final class Preferences: ObservableObject {
     public var appearance: Appearance { get { getEnum("appearance", .system) } set { setEnum("appearance", newValue) } }
     public var themeColor: ThemeColor { get { getEnum("themeColor", .accent) } set { setEnum("themeColor", newValue) } }
     public var fontSizeDelta: Int { get { get("fontSizeDelta", 0) } set { set("fontSizeDelta", newValue) } }
-    public var sounds: SoundsMode { get { getEnum("sounds", .inApp) } set { setEnum("sounds", newValue) } }
+    public var sounds: SoundsMode { get { getEnum("sounds", .off) } set { setEnum("sounds", newValue) } }
     public var pathBarStyle: PathBarStyle { get { getEnum("pathBarStyle", .interactive) } set { setEnum("pathBarStyle", newValue) } }
     public var pathBarPosition: PathBarPosition { get { getEnum("pathBarPosition", .top) } set { setEnum("pathBarPosition", newValue) } }
     public var showShelf: Bool { get { get("showShelf", true) } set { set("showShelf", newValue) } }

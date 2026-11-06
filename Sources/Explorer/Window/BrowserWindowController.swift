@@ -8,6 +8,7 @@ import ExplorerKit
 /// status bar, shelf flap, and routes every command.
 final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate, NSSearchFieldDelegate, NSMenuItemValidation {
     let state: BrowserState
+    let operations: FileOps
     let tree = TreeViewController()
     let info = InfoPanelController()
     let shelf = ShelfController()
@@ -32,7 +33,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     static var all: [BrowserWindowController] = []
 
-    init(location: Location, select: [URL] = []) {
+    init(location: Location, select: [URL] = [], operations: FileOps = .shared) {
+        self.operations = operations
         state = BrowserState(location: location)
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 652),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -215,7 +217,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
         }.store(in: &cancellables)
         Publishers.Merge3(state.$errorMessage.map { _ in () }, state.$warning.map { _ in () }, state.$searchGathering.map { _ in () })
             .receive(on: RunLoop.main).sink { [weak self] in DispatchQueue.main.async { self?.updateBanner() } }.store(in: &cancellables)
-        FileOps.shared.$running.receive(on: RunLoop.main).sink { [weak self] _ in self?.statusBar.refresh() }.store(in: &cancellables)
+        ops.$running.receive(on: RunLoop.main).sink { [weak self] _ in self?.statusBar.refresh() }.store(in: &cancellables)
         NotificationCenter.default.publisher(for: .viewSettingsChanged).receive(on: RunLoop.main).sink { [weak self] _ in
             self?.layoutChrome(); self?.fileView.reloadItems(); self?.tree.rebuild()
         }.store(in: &cancellables)
@@ -266,7 +268,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        FileOps.shared.checkClipboardReplaced(window: window)
+        ops.checkClipboardReplaced(window: window)
         AppDelegate.lastActive = self
     }
 
@@ -603,7 +605,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
             catch { Alerts.error("Error while renaming", error.localizedDescription, window: window) }
             return
         }
-        if let new = FileOps.shared.rename(url, to: name, window: window) {
+        if let new = ops.rename(url, to: name, window: window) {
             state.pendingSelection = [new]
             state.softReload()
         } else {
