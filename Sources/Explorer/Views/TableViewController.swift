@@ -180,6 +180,7 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
         }
     }
 
+    var keyboardView: NSView { table }
     func focus() { view.window?.makeFirstResponder(table) }
 
     func item(at row: Int) -> FileItem? {
@@ -375,11 +376,6 @@ final class TableViewController: NSViewController, FileViewing, NSTableViewDataS
         return host?.contextMenu(for: state.selection, inTree: false)
     }
 
-    // "=" calculates folder size in Table View
-    func calculateSelectedSizes() {
-        let folders = state.selection.filter(\.isFolder).map(\.url)
-        state.calculateSizes(folders.isEmpty ? state.items.filter(\.isFolder).map(\.url) : folders)
-    }
 }
 
 final class FileTableView: NSTableView {
@@ -423,9 +419,6 @@ final class FileTableView: NSTableView {
     override func keyDown(with event: NSEvent) {
         slowRename.cancel()
         if let owner, let host = owner.host, host.handleKey(event) { return }
-        if event.charactersIgnoringModifiers == "=" && event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty && !(owner?.archiveMode ?? true) {
-            owner?.calculateSelectedSizes(); return
-        }
         if let ch = event.characters, !ch.isEmpty, event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
            ch.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || CharacterSet.punctuationCharacters.contains($0) || $0 == " " && typeSelect.active }) {
             if let owner, let idx = typeSelect.match(ch, in: (0..<numberOfRows).map { owner.item(at: $0).map { ItemStyle.displayName($0) } ?? "" }) {

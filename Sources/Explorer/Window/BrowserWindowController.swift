@@ -524,34 +524,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
 
     /// Handles keys common to all views. Returns true when consumed.
     func handleKey(_ e: NSEvent, fromTree: Bool = false) -> Bool {
-        let mods = e.modifierFlags.intersection([.command, .option, .control, .shift])
+        let context: KeyboardShortcuts.Context
+        if window?.firstResponder is NSTextView { context = .editor }
+        else if fromTree { context = .tree }
+        else if let table = fileView as? TableViewController, !table.archiveMode { context = .table }
+        else { context = .files }
         let p = state.prefs
-        switch e.keyCode {
-        case 36, 76: // return / enter
-            if fromTree { return false }
-            if mods == [] { p.returnAction == .rename ? renameSelected(nil) : openSelected(nil); return true }
-            if mods == .command || mods == .shift { renameSelected(nil); return true }
-        case 49: // space
-            if mods == [] { quickLook(nil); return true }
-        case 120: // F2
-            renameSelected(nil); return true
-        case 96: // F5
-            refresh(nil); return true
-        case 51: // delete
-            if mods == [] && !fromTree {
-                if p.trashWithDelete { moveToTrash(nil); return true }
-                if p.backWithDelete { goBack(nil); return true }
-            }
-        case 117: // forward delete
-            if mods == [] { moveToTrash(nil); return true }
-            if mods == .option { deletePermanently(nil); return true }
-        case 125 where mods == .command: openSelected(nil); return true      // ⌘↓
-        case 126 where mods == .command: goUp(nil); return true              // ⌘↑
-        case 124 where mods == .command: addToShelf(nil); return true        // ⌘→
-        case 123 where mods == .command && NSApp.userInterfaceLayoutDirection == .rightToLeft: addToShelf(nil); return true
-        default: break
-        }
-        return false
+        guard let command = KeyboardShortcuts.resolve(keyCode: e.keyCode, characters: e.charactersIgnoringModifiers,
+            modifiers: e.modifierFlags, context: context, returnAction: p.returnAction,
+            trashWithDelete: p.trashWithDelete, backWithDelete: p.backWithDelete,
+            rightToLeft: NSApp.userInterfaceLayoutDirection == .rightToLeft) else { return false }
+        let item = NSMenuItem(title: "", action: command.action, keyEquivalent: "")
+        // A recognized but unavailable file command must not fall through to a native destructive action.
+        guard validateMenuItem(item) else { return true }
+        return NSApp.sendAction(command.action, to: self, from: item)
     }
 
     // MARK: Quick Look
@@ -671,12 +657,6 @@ extension BrowserWindowController: QLPreviewPanelDataSource, QLPreviewPanelDeleg
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { qlItems.count }
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! { qlItems[index] as NSURL }
     func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
-        if event.type == .keyDown, [123, 124, 125, 126].contains(event.keyCode) {
-            fileView.view.window?.makeFirstResponder(fileView.view)
-            (fileView as? TableViewController)?.table.keyDown(with: event)
-            (fileView as? CollectionViewController)?.collection.keyDown(with: event)
-            return true
-        }
-        return false
+        fileView.handlePreviewNavigation(event)
     }
 }

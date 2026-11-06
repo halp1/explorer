@@ -1,8 +1,8 @@
-# Explorer ↔ Folders Pro 2.11.5 parity tracker
+# Explorer ↔ Folders Pro 2.12.1 parity tracker
 
-Legend: ✅ built and checked (unit test or rendered snapshot) · 🟡 built, not yet exercised end-to-end · ⬜ not built
+Legend: ✅ built and checked (unit test or rendered snapshot), 🟡 built, not yet exercised end-to-end, ⬜ not built
 
-The reference is `/Applications/Folders Pro.app` (com.minttype.folders-pro 2.11.5), plus its User's Guide and Keyboard Shortcuts pages.
+The keyboard reference is [Folders Pro](</Applications/Folders Pro.app>) (com.minttype.folders-pro 2.12.1), plus its [User's Guide](https://foldersapp.dev/guide/) and [Keyboard Shortcuts](https://foldersapp.dev/shortcuts/). Other feature statuses retain their earlier verification scope.
 
 ## Window & views
 | Feature | Status | Notes |
@@ -19,6 +19,18 @@ The reference is `/Applications/Folders Pro.app` (com.minttype.folders-pro 2.11.
 | Grouping (kind/date/size/tags/rating) and folders first/last | ✅ | unit tests |
 | Remember view options per folder (+ inherit to subfolders) | ✅ | unit tests |
 | Tabs, Customize Tab, Tab Sets | 🟡 | |
+
+## Keyboard shortcuts
+
+- Existing-feature bindings follow the [2.12.1 shortcut list](https://foldersapp.dev/shortcuts/). Explorer's extra bindings remain available.
+- Shared raw-key resolution validates command availability, uses exact shortcut modifiers, honors Return/Delete preferences, and uses the trailing arrow for Shelf in RTL layouts.
+- All four file views share an input route. Gallery supports type selection and stable arrow/range selection after programmatic selection changes. Quick Look forwards navigation through the active file view.
+- Tree shortcuts target the selected node, not retained file-view selection. Option-number shortcuts count only visible unselectable top-level groups. Option-arrow navigation expands groups, skips empty groups, and stops at boundaries.
+- Show All Tabs is explicitly registered on Shift-Command-backslash using native window tab overview.
+- Text editors retain Command-arrow and Command-Delete behavior. Unsupported tree file actions are disabled rather than applied to stale selection.
+- Regression coverage includes resolver branches, modifier rejection, editor/menu protection, tree planning, actual Gallery responder navigation, and Command-Down through every file view. `make test` passed with 11 app tests and 70 core tests, including one skipped hardware-only MTP test.
+- Scope exclusion: Shift-Command-K Remote Connections is not registered. Explorer has no SFTP, FTP, FTPS, or S3 backend. No placeholder command is presented.
+- Verification limit: not every OS dialog, non-QWERTY keyboard layout, physical-device operation, or full menu-driven workflow has been exercised end-to-end. RTL command resolution is unit-tested, not tested with a live RTL system session.
 
 ## File operations
 | Feature | Status | Notes |

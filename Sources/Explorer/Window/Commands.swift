@@ -18,6 +18,8 @@ extension BrowserWindowController {
     // MARK: Validation
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if isEditingText && KeyboardShortcuts.usesFileSelection(item.action) { return false }
+        if let allowed = validateTreeKeyboardCommand(item.action) { return allowed }
         let hasSel = !sel.isEmpty
         let fs = state.location.isFileSystem
         let writable = state.canWrite
@@ -169,9 +171,18 @@ extension BrowserWindowController {
         tree.rebuild()
     }
 
-    @objc func openSelected(_ sender: Any?) { open(sel, newWindow: false) }
-    @objc func openInNewWindow(_ sender: Any?) { open(sel, newWindow: true) }
-    @objc func openInNewTab(_ sender: Any?) { open(sel, newWindow: false, newTab: true) }
+    @objc func openSelected(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(openSelected(_:))) else { return }
+        open(sel, newWindow: false)
+    }
+    @objc func openInNewWindow(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(openInNewWindow(_:))) else { return }
+        open(sel, newWindow: true)
+    }
+    @objc func openInNewTab(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(openInNewTab(_:))) else { return }
+        open(sel, newWindow: false, newTab: true)
+    }
     @objc func openWithApp(_ sender: NSMenuItem) {
         guard let app = sender.representedObject as? URL else { return }
         openFiles(sel, with: app)
@@ -310,6 +321,7 @@ extension BrowserWindowController {
     }
 
     @objc func copy(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(copy(_:))) else { return }
         if !mtpSelection.isEmpty {
             guard mtpSelection.count == sel.count else { return }
             MTPOps.copy(mtpSelection, window: window)
@@ -331,7 +343,10 @@ extension BrowserWindowController {
         }
         ops.copy(selURLs)
     }
-    @objc func copyAsPath(_ sender: Any?) { ops.copyPaths(selURLs.isEmpty ? selOrCurrent : selURLs) }
+    @objc func copyAsPath(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(copyAsPath(_:))) else { return }
+        ops.copyPaths(selURLs.isEmpty ? selOrCurrent : selURLs)
+    }
     @objc func cut(_ sender: Any?) {
         guard localContext else { return }
         if state.isArchive { archiveRemove(); return }
@@ -344,6 +359,7 @@ extension BrowserWindowController {
     }
 
     @objc func paste(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(paste(_:))) else { return }
         if let address = state.mtpLocation {
             MTPOps.upload(ops.clipboardURLs, to: address, state: state, window: window)
             return
@@ -363,6 +379,7 @@ extension BrowserWindowController {
         ops.paste(into: dir, mode: .move, window: window) { [weak self] u in self?.state.select(urls: u) }
     }
     @objc func pasteIntoFolder(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(pasteIntoFolder(_:))) else { return }
         guard let f = sel.first, sel.count == 1, f.isDirectory else { return }
         if let address = f.mtpAddress {
             MTPOps.upload(ops.clipboardURLs, to: address, state: state, window: window)
@@ -388,6 +405,7 @@ extension BrowserWindowController {
     // MARK: Destructive
 
     @objc func moveToTrash(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(moveToTrash(_:))) else { return }
         guard !sel.isEmpty else { return }
         if state.mtpLocation != nil || !mtpSelection.isEmpty {
             guard canMutateMTPSelection else { return }
@@ -408,6 +426,7 @@ extension BrowserWindowController {
     }
 
     @objc func deletePermanently(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(deletePermanently(_:))) else { return }
         if state.isDevice || !mtpSelection.isEmpty {
             moveToTrash(sender)
             return
@@ -430,6 +449,7 @@ extension BrowserWindowController {
     }
 
     @objc func eject(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(eject(_:))) else { return }
         guard localContext else { return }
         if let v = sel.first, v.isVolume { VolumeOps.eject(v.url, window: window); return }
         if let u = state.location.url, let v = Volumes.volume(containing: u) {
@@ -441,6 +461,7 @@ extension BrowserWindowController {
     // MARK: Rename / duplicate / touch
 
     @objc func renameSelected(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(renameSelected(_:))) else { return }
         if state.mtpLocation != nil || !mtpSelection.isEmpty {
             guard sel.count == 1, canMutateMTPSelection else { return }
             renameViaPrompt(sel[0].url)
@@ -579,6 +600,7 @@ extension BrowserWindowController {
     // MARK: Favorites, default & home folders
 
     @objc func toggleFavorite(_ sender: Any?) {
+        guard !routeTreeKeyboardCommand(#selector(toggleFavorite(_:))) else { return }
         guard localContext else { return }
         let targets = sel.isEmpty ? (state.currentDirectory.map { [$0] } ?? []) : selURLs
         let allFav = targets.allSatisfy(Favorites.contains)
@@ -666,6 +688,8 @@ extension BrowserWindowController {
     // MARK: Shelf
 
     @objc func addToShelf(_ sender: Any?) {
+        guard !isEditingText else { return }
+        guard !routeTreeKeyboardCommand(#selector(addToShelf(_:))) else { return }
         guard localContext else { return }
         ShelfStore.add(realSelection)
         if !state.prefs.showShelf { state.prefs.showShelf = true; broadcastChrome() }

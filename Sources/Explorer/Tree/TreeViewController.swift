@@ -493,22 +493,22 @@ final class TreeViewController: NSViewController, NSOutlineViewDataSource, NSOut
 
     // MARK: Keyboard: ⌥↑/⌥↓ jump between top-level nodes, ⌥1-4 toggle sections
 
+    private var visibleKeyboardRoots: [TreeNode] {
+        roots.filter { outline.row(forItem: $0) >= 0 }
+    }
+
     func jumpTopLevel(_ dir: Int) {
-        let rows = roots.map { outline.row(forItem: $0) }
-        let cur = outline.selectedRow
-        let target = dir > 0 ? rows.first { $0 > cur } : rows.last { $0 < cur }
-        if let t = target {
-            let n = outline.item(atRow: t) as! TreeNode
-            if let first = n.children?.first, outline.isItemExpanded(n) {
-                outline.selectRowIndexes([outline.row(forItem: first)], byExtendingSelection: false)
-            }
-            outline.scrollRowToVisible(t)
-        }
+        let selection = outline.selectedRow >= 0 ? outline.item(atRow: outline.selectedRow) as? TreeNode : nil
+        guard let jump = TreeKeyboardNavigation.jump(direction: dir, roots: visibleKeyboardRoots, selection: selection) else { return }
+        for ancestor in jump.ancestorsToExpand { outline.expandItem(ancestor) }
+        let row = outline.row(forItem: jump.target)
+        guard row >= 0 else { return }
+        outline.selectRowIndexes([row], byExtendingSelection: false)
+        outline.scrollRowToVisible(row)
     }
 
     func toggleSection(_ index: Int) {
-        guard roots.indices.contains(index) else { return }
-        let n = roots[index]
+        guard let n = TreeKeyboardNavigation.group(at: index, roots: visibleKeyboardRoots) else { return }
         if outline.isItemExpanded(n) { outline.collapseItem(n) } else { outline.expandItem(n) }
     }
 
@@ -615,14 +615,12 @@ final class TreeOutlineView: NSOutlineView {
     }
 
     override func keyDown(with event: NSEvent) {
-        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if mods == .option || mods == [.option, .numericPad, .function] || mods.contains(.option) && !mods.contains(.command) {
-            switch event.keyCode {
-            case 126: owner?.jumpTopLevel(-1); return
-            case 125: owner?.jumpTopLevel(1); return
-            default:
-                if let c = event.charactersIgnoringModifiers, let d = Int(c), (1...4).contains(d) { owner?.toggleSection(d - 1); return }
+        if let action = TreeKeyboardNavigation.action(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, modifiers: event.modifierFlags) {
+            switch action {
+            case .jump(let direction): owner?.jumpTopLevel(direction)
+            case .toggleGroup(let index): owner?.toggleSection(index)
             }
+            return
         }
         if let host = owner?.host, host.handleKey(event, fromTree: true) { return }
         super.keyDown(with: event)

@@ -7,15 +7,18 @@ import UniformTypeIdentifiers
 import ExplorerKit
 
 /// Gallery view: large preview of the selected item over a horizontal thumbnail strip.
-final class GalleryViewController: NSViewController, FileViewing, NSCollectionViewDataSource, NSCollectionViewDelegate {
+final class GalleryViewController: NSViewController, FileViewing, CollectionKeyboardInput, NSCollectionViewDataSource, NSCollectionViewDelegate {
     var state: BrowserState!
     weak var host: BrowserWindowController?
 
-    private let strip = FileCollectionView()
+    private let strip = GalleryCollectionView()
     private let stripScroll = NSScrollView()
     let preview = ZoomablePreview()
     private var items: [FileItem] = []
     private var suppress = false
+    private var keyboardSelection = Set<String>()
+    private var keyboardAnchor: Int?
+    private var keyboardHead: Int?
 
     override func loadView() {
         let root = NSView()
@@ -27,6 +30,8 @@ final class GalleryViewController: NSViewController, FileViewing, NSCollectionVi
         strip.collectionViewLayout = layout
         strip.dataSource = self
         strip.delegate = self
+        strip.keyboardInput = self
+        strip.gallery = self
         strip.isSelectable = true
         strip.allowsMultipleSelection = true
         strip.backgroundColors = [.clear]
@@ -54,6 +59,9 @@ final class GalleryViewController: NSViewController, FileViewing, NSCollectionVi
     func reloadItems() {
         guard isViewLoaded else { return }
         items = state.items
+        keyboardSelection = []
+        keyboardAnchor = nil
+        keyboardHead = nil
         suppress = true
         strip.reloadData()
         suppress = false
@@ -76,6 +84,40 @@ final class GalleryViewController: NSViewController, FileViewing, NSCollectionVi
         preview.show(state.selection.first, state: state)
     }
 
+    var keyboardView: NSView { strip }
+    var flatNames: [(IndexPath, String)] {
+        items.enumerated().map { (IndexPath(item: $0.offset, section: 0), ItemStyle.displayName($0.element)) }
+    }
+    func selectForKeyboard(_ indexPath: IndexPath) {
+        guard items.indices.contains(indexPath.item) else { return }
+        applyKeyboardSelection(IndexSet(integer: indexPath.item), anchor: indexPath.item, head: indexPath.item)
+    }
+
+    /// NSCollectionView retains a private navigation anchor after programmatic selection changes.
+    /// Gallery has a one-dimensional strip, so resolve its range from the current model instead.
+    func moveKeyboardSelection(_ direction: Int, extending: Bool) {
+        guard !items.isEmpty else { return }
+        let selectedIDs = Set(state.selection.map(\.id))
+        let selected = items.indices.filter { selectedIDs.contains(items[$0].id) }
+        let continuing = selectedIDs == keyboardSelection
+        let head = continuing ? keyboardHead : nil
+        let current = head ?? (direction > 0 ? selected.max() : selected.min())
+        let next = current.map { max(0, min(items.count - 1, $0 + direction)) } ?? (direction > 0 ? 0 : items.count - 1)
+        let anchor = extending ? ((continuing ? keyboardAnchor : nil) ?? current ?? next) : next
+        let indexes = extending ? IndexSet(integersIn: min(anchor, next)...max(anchor, next)) : IndexSet(integer: next)
+        applyKeyboardSelection(indexes, anchor: anchor, head: next)
+    }
+
+    private func applyKeyboardSelection(_ indexes: IndexSet, anchor: Int, head: Int) {
+        keyboardAnchor = anchor
+        keyboardHead = head
+        keyboardSelection = Set(indexes.map { items[$0].id })
+        suppress = true
+        strip.selectionIndexPaths = Set(indexes.map { IndexPath(item: $0, section: 0) })
+        suppress = false
+        changed()
+        strip.scrollToItems(at: [IndexPath(item: head, section: 0)], scrollPosition: .nearestHorizontalEdge)
+    }
     func focus() { view.window?.makeFirstResponder(strip) }
     func beginRename(_ url: URL) { host?.renameViaPrompt(url) }
     func setZoom(_ delta: Int) { preview.zoom(by: delta > 0 ? 1.25 : 0.8) }
@@ -115,6 +157,20 @@ final class GalleryViewController: NSViewController, FileViewing, NSCollectionVi
             Alerts.error("Error transforming image", error.localizedDescription, window: view.window)
         }
     }
+}
+
+private final class GalleryCollectionView: FileCollectionView {
+    weak var gallery: GalleryViewController?
+    private var horizontalStep: Int { userInterfaceLayoutDirection == .rightToLeft ? -1 : 1 }
+
+    override func moveLeft(_ sender: Any?) { gallery?.moveKeyboardSelection(-horizontalStep, extending: false) }
+    override func moveRight(_ sender: Any?) { gallery?.moveKeyboardSelection(horizontalStep, extending: false) }
+    override func moveUp(_ sender: Any?) { gallery?.moveKeyboardSelection(-1, extending: false) }
+    override func moveDown(_ sender: Any?) { gallery?.moveKeyboardSelection(1, extending: false) }
+    override func moveLeftAndModifySelection(_ sender: Any?) { gallery?.moveKeyboardSelection(-horizontalStep, extending: true) }
+    override func moveRightAndModifySelection(_ sender: Any?) { gallery?.moveKeyboardSelection(horizontalStep, extending: true) }
+    override func moveUpAndModifySelection(_ sender: Any?) { gallery?.moveKeyboardSelection(-1, extending: true) }
+    override func moveDownAndModifySelection(_ sender: Any?) { gallery?.moveKeyboardSelection(1, extending: true) }
 }
 
 final class GalleryThumb: NSCollectionViewItem {

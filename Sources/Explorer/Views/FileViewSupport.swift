@@ -11,11 +11,30 @@ protocol FileViewing: NSViewController {
     func syncSelection()
     func beginRename(_ url: URL)
     func focus()
+    var keyboardView: NSView { get }
     func setZoom(_ delta: Int)
 }
 
 extension FileViewing {
     func setZoom(_ delta: Int) {}
+
+    /// Quick Look delegates selection navigation to the same responder used by the file view.
+    @discardableResult
+    func handlePreviewNavigation(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown, [123, 124, 125, 126].contains(event.keyCode),
+              KeyboardShortcuts.modifiers(event.modifierFlags).subtracting(.shift).isEmpty,
+              !state.items.isEmpty else { return false }
+        focus()
+        keyboardView.keyDown(with: event)
+        return true
+    }
+}
+
+/// Keyboard-only input shared by the grouped collection views and Gallery's thumbnail strip.
+protocol CollectionKeyboardInput: AnyObject {
+    var host: BrowserWindowController? { get }
+    var flatNames: [(IndexPath, String)] { get }
+    func selectForKeyboard(_ indexPath: IndexPath)
 }
 
 /// Click an already selected item's name again and, after the double-click interval, its name becomes

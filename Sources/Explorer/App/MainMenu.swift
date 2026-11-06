@@ -13,7 +13,7 @@ enum MainMenu {
     static func key(_ code: Int) -> String { String(Character(UnicodeScalar(code)!)) }
 
     static func build() -> NSMenu {
-        let main = NSMenu()
+        let main = KeyboardMenu()
         main.addItem(sub(appMenu()))
         main.addItem(sub(fileMenu()))
         main.addItem(sub(editMenu()))
@@ -62,7 +62,10 @@ enum MainMenu {
         m.addItem(i("Open in New Window", #selector(B.openInNewWindow(_:)), "o", [.command, .option]))
         m.addItem(i("Open in New Tab", #selector(B.openInNewTab(_:)), "o", [.command, .control]))
         let ow = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
-        ow.submenu = DynamicMenu(title: "Open With") { AppDelegate.lastActive.map { OpenWithMenu.build(for: $0.state.selection).items } ?? [] }
+        ow.submenu = DynamicMenu(title: "Open With") {
+            guard let controller = AppDelegate.lastActive, !controller.hasTreeFocus else { return [] }
+            return OpenWithMenu.build(for: controller.state.selection).items
+        }
         m.addItem(ow)
         m.addItem(.separator())
         m.addItem(i("Close Window", #selector(NSWindow.performClose(_:)), "w"))
@@ -83,7 +86,10 @@ enum MainMenu {
         m.addItem(.separator())
         m.addItem(i("Quick Look", #selector(B.quickLook(_:)), "y"))
         let share = NSMenuItem(title: "Share", action: nil, keyEquivalent: "")
-        share.submenu = DynamicMenu(title: "Share") { Menus.shareMenu(AppDelegate.lastActive?.state.selectedURLs ?? []).items }
+        share.submenu = DynamicMenu(title: "Share") {
+            guard let controller = AppDelegate.lastActive, !controller.hasTreeFocus else { return [] }
+            return Menus.shareMenu(controller.state.selectedURLs).items
+        }
         m.addItem(share)
         m.addItem(.separator())
         m.addItem(i("Add to Favorites", #selector(B.toggleFavorite(_:)), "t", [.command, .control]))
@@ -122,7 +128,8 @@ enum MainMenu {
         m.addItem(i("Select All", #selector(NSResponder.selectAll(_:)), "a"))
         m.addItem(i("Deselect All", #selector(B.deselectAll(_:)), "a", [.command, .option]))
         m.addItem(.separator())
-        m.addItem(i("Add to Shelf", #selector(B.addToShelf(_:)), key(NSRightArrowFunctionKey), [.command]))
+        let shelfArrow = NSApp.userInterfaceLayoutDirection == .rightToLeft ? NSLeftArrowFunctionKey : NSRightArrowFunctionKey
+        m.addItem(i("Add to Shelf", #selector(B.addToShelf(_:)), key(shelfArrow), [.command]))
         return m
     }
 
@@ -201,6 +208,7 @@ enum MainMenu {
         let m = NSMenu(title: "Window")
         m.addItem(i("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"))
         m.addItem(i("Zoom", #selector(NSWindow.performZoom(_:))))
+        m.addItem(i("Show All Tabs", #selector(NSWindow.toggleTabOverview(_:)), "\\", [.command, .shift]))
         m.addItem(.separator())
         m.addItem(i("Duplicate Window", #selector(B.duplicateWindow(_:))))
         m.addItem(i("Duplicate Tab", #selector(B.duplicateTab(_:))))

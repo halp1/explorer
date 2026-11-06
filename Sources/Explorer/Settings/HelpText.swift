@@ -8,7 +8,7 @@ enum HelpText {
     ⏎  Open (or Rename, per Settings)
     ␣  Quick Look
     F2, ⌘⏎, ⇧⏎  Rename
-    ⌘,  Settings
+    ⌘,  Settings      ⌘H  Hide Explorer      ⌥⌘H  Hide Others      ⌘Q  Quit
     ⌘N  New Window      ⌘T  New Tab
     ⇧⌘N  New Folder…     ⌃⇧⌘N  New Folder with Selection…
     ⌥⌘N  New Empty File…     ⌃⌘N  New File from Clipboard…
@@ -26,17 +26,20 @@ enum HelpText {
     ⌘V  Paste      ⌥⌘V  Move Item(s) Here      ⇧⌘V  Paste as Symlink(s)      ⌃⌘V  Paste as Alias(es)
     ⌘A  Select All      ⌥⌘A  Deselect All
     ⌘-  Zoom out / smaller icons      ⌘=  Zoom in / larger icons
-    ⌘→  Add selected items to Shelf
+    ⌘→  Add selected items to Shelf (⌘← in right-to-left layouts)
     =  Calculate Folder Size (Table View)
     ⌘[  Back      ⌘]  Forward      ⌘↑  Enclosing folder
     ⇧⌘G  Go to Folder…      ⌘K  Mount Network Share…
-    ⇧⌘\\  Show All Tabs
+    ⇧⌘\\  Show All Tabs      ⌘M  Minimize
     ⌘1 / ⌘2 / ⌘3 / ⌘4  View as Icons / List / Table / Gallery
     ⌘0  Group Folders First      ⌥⌘0  Group Folders Last
     ⌥⌘S  Sidebar      ⌥⌘P  Path Bar      ⌘/  Status Bar      ⌥⌘/  Action Toolbar
     ⌘.  Hidden files      ⌘I  File Info      ⌘J  Remember View Options for This Folder
-    ⌥↑ / ⌥↓  Folder tree: previous / next top-level node
-    ⌥1…⌥4  Folder tree: expand/collapse top-level node 1–4
+    ⌥↑ / ⌥↓  Folder tree: previous / next top-level destination
+    ⌥1…⌥4  Folder tree: expand/collapse unselectable top-level group 1 through 4
+
+    Return and Delete follow Settings. File commands use the focused file view or supported tree node.
+    Text fields keep normal editing keys. Folder-size calculation applies only to Table View, not archives.
     """
 
     static let guide = """

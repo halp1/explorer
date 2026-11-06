@@ -2,7 +2,7 @@ import AppKit
 import ExplorerKit
 
 /// Icons view and List view (column-flow) on NSCollectionView, with group sections.
-final class CollectionViewController: NSViewController, FileViewing, NSCollectionViewDataSource, NSCollectionViewDelegate, NSCollectionViewDelegateFlowLayout, NSTextFieldDelegate {
+final class CollectionViewController: NSViewController, FileViewing, CollectionKeyboardInput, NSCollectionViewDataSource, NSCollectionViewDelegate, NSCollectionViewDelegateFlowLayout, NSTextFieldDelegate {
     enum Mode { case icons, list }
     var state: BrowserState!
     weak var host: BrowserWindowController?
@@ -34,6 +34,7 @@ final class CollectionViewController: NSViewController, FileViewing, NSCollectio
         collection.setDraggingSourceOperationMask([.copy, .move, .link], forLocal: true)
         collection.setDraggingSourceOperationMask([.copy, .move, .link], forLocal: false)
         collection.owner = self
+        collection.keyboardInput = self
         scroll.documentView = collection
         scroll.hasVerticalScroller = mode == .icons
         scroll.hasHorizontalScroller = mode == .list
@@ -98,7 +99,12 @@ final class CollectionViewController: NSViewController, FileViewing, NSCollectio
         }
     }
 
+    var keyboardView: NSView { collection }
     func focus() { view.window?.makeFirstResponder(collection) }
+    func selectForKeyboard(_ indexPath: IndexPath) {
+        collection.selectionIndexPaths = [indexPath]
+        selectionChanged()
+    }
 
     func setZoom(_ delta: Int) {
         guard mode == .icons else { return }
@@ -237,8 +243,9 @@ final class CollectionViewController: NSViewController, FileViewing, NSCollectio
     }
 }
 
-final class FileCollectionView: NSCollectionView {
+class FileCollectionView: NSCollectionView {
     weak var owner: CollectionViewController?
+    weak var keyboardInput: CollectionKeyboardInput?
     private let typeSelect = TypeSelect()
     let slowRename = SlowClickRename()
 
@@ -282,14 +289,13 @@ final class FileCollectionView: NSCollectionView {
 
     override func keyDown(with event: NSEvent) {
         slowRename.cancel()
-        if let host = owner?.host, host.handleKey(event) { return }
+        if let host = keyboardInput?.host, host.handleKey(event) { return }
         if let ch = event.characters, !ch.isEmpty, event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
            ch.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || CharacterSet.punctuationCharacters.contains($0) }),
-           let owner {
-            let names = owner.flatNames
+           let input = keyboardInput {
+            let names = input.flatNames
             if let idx = typeSelect.match(ch, in: names.map(\.1)) {
-                selectionIndexPaths = [names[idx].0]
-                owner.collectionView(self, didSelectItemsAt: [names[idx].0])
+                input.selectForKeyboard(names[idx].0)
                 scrollToItems(at: [names[idx].0], scrollPosition: .nearestHorizontalEdge)
                 return
             }

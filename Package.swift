@@ -44,5 +44,6 @@ let package = Package(
             linkerSettings: [.unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", "Support/Helper-Info.plist"])]
         ),
         .testTarget(name: "ExplorerKitTests", dependencies: ["ExplorerKit"], path: "Tests/ExplorerKitTests"),
+        .testTarget(name: "ExplorerTests", dependencies: ["Explorer", "ExplorerKit"], path: "Tests/ExplorerTests"),
     ]
 )
