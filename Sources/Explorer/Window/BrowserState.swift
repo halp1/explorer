@@ -39,6 +39,7 @@ final class BrowserState: ObservableObject {
     private var spotlight: SpotlightSearch?
     private var fullScan: FullScanSearch?
     private var loadToken = UUID()
+    private var hasStartedLoading = false
     private var suppressOptionSave = false
 
     /// Asks the user for an archive password (shows malware warning first). nil = cancelled.
@@ -107,7 +108,8 @@ final class BrowserState: ObservableObject {
 
     func go(_ destination: Location, recordHistory: Bool = true, select: [URL] = []) {
         let loc = Self.normalized(destination)
-        if loc == location && !select.isEmpty {
+        // A new tab starts at its destination, so its first visit must still load.
+        if loc == location && !select.isEmpty && hasStartedLoading {
             pendingSelection = select
             applySelection()
             return
@@ -243,6 +245,7 @@ final class BrowserState: ObservableObject {
     func reload() {
         let token = UUID()
         loadToken = token
+        hasStartedLoading = true
         monitor?.stop(); monitor = nil
         spotlight?.stop(); spotlight = nil
         fullScan?.cancel(); fullScan = nil
