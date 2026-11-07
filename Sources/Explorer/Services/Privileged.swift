@@ -140,14 +140,23 @@ final class Privileged {
 
     func installCLI(completion: @escaping (Error?) -> Void) {
         guard let src = Bundle.main.url(forResource: "explorer", withExtension: nil) else {
-            completion(OpError.message("The launcher script is missing from the app bundle.")); return
+            completion(OpError.message("The launcher script is missing from the app bundle."))
+            return
         }
-        let q: (String) -> String = { "'" + $0 + "'" }
+        let q: (String) -> String = { "'" + $0.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let script = "mkdir -p /usr/local/bin && cp -f \(q(src.path)) \(q(Self.cliPath)) && chmod 755 \(q(Self.cliPath))"
-        let escaped = script.replacingOccurrences(of: "\"", with: "\\\"")
+        let escaped = script.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         DispatchQueue.global().async {
             let out = ActionRunner.runAppleScript("do shell script \"\(escaped)\" with administrator privileges")
-            DispatchQueue.main.async { completion(out.status == 0 ? nil : OpError.message(out.log)) }
+            DispatchQueue.main.async {
+                if out.status == 0 {
+                    completion(nil)
+                } else if out.log.contains("-128") {
+                    completion(OpError.cancelled)
+                } else {
+                    completion(OpError.message(out.log.trimmingCharacters(in: .whitespacesAndNewlines)))
+                }
+            }
         }
     }
 

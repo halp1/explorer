@@ -370,11 +370,23 @@ struct ScriptingSettings: View {
                     else { Text(.init("The **explorer** command is not installed.")).foregroundColor(.secondary) }
                     Spacer()
                     Button(installed ? "Uninstall" : "Install…") {
-                        let done: (Error?) -> Void = { e in installed = Privileged.shared.cliInstalled; if let e, !(e is OpError) { error = e.localizedDescription } }
+                        let done: (Error?) -> Void = { e in
+                            installed = Privileged.shared.cliInstalled
+                            if let e {
+                                if case OpError.cancelled = e {
+                                    // User cancelled
+                                } else {
+                                    error = e.localizedDescription
+                                }
+                            } else {
+                                error = nil
+                            }
+                        }
                         if installed { Privileged.shared.uninstallCLI(completion: done) } else { Privileged.shared.installCLI(completion: done) }
                     }
                 }
                 Note("Run **`explorer`** *`folder`* to open a folder in a new window, or **`explorer`** *`file`* to reveal a file. With no argument, **`explorer`** opens a new window.")
+                Note("The tool will be copied to \(Privileged.cliPath). Administrator privileges are required.")
                 if let error { Text(error).foregroundColor(.red).font(.caption) }
             }
             Section("Actions") {

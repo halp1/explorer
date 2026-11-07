@@ -1,57 +1,87 @@
 #!/bin/bash
 #
-# explorer: open folders and reveal files in Explorer.app from a shell.
+# explorer - command-line launcher for the Explorer app.
 #
-#   explorer           new window
-#   explorer DIR       open DIR in a new window
-#   explorer FILE      open FILE's folder with FILE selected
+#   explorer            open a new window
+#   explorer <dir>      open the directory in a new window
+#   explorer <file>     reveal and select the file in its enclosing folder
 #
-# Works by handing the absolute path to the app's URL schemes
-# (explorer:// for folders, explorerreveal:// for items).
+# Hands off to the app through its registered URL schemes (explorer:// and
+# explorerreveal://), which the app receives in AppDelegate URL handler.
+# open discards the caller's working directory, so paths are resolved to an
+# absolute path here before being turned into a URL.
 
 set -euo pipefail
 
-prog=${0##*/}
-
-die_usage() {
-	printf 'usage: %s [path]\n' "$prog" >&2
+usage() {
+	cat >&2 <<-'EOF'
+		Usage: explorer [path]
+		  (no path)          open a new window
+		  path to a folder   open it in a new window
+		  path to a file     reveal and select it
+	EOF
 	exit 64
 }
 
-if [[ $# -gt 1 ]]; then die_usage; fi
-if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then die_usage; fi
-
-if [[ $# -eq 0 ]]; then
-	exec open "explorer:///%23"
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]
+then
+	usage
 fi
 
-arg=$1
+if [ "$#" -gt 1 ]
+then
+	usage
+fi
 
-# Percent-encode every byte outside the unreserved set, keeping '/'.
-encode() {
-	local LC_ALL=C str=$1 i ch code res=""
-	for ((i = 0; i < ${#str}; i++)); do
-		ch=${str:i:1}
-		if [[ $ch == [A-Za-z0-9._~/-] ]]; then
-			res+=$ch
-		else
-			printf -v code '%d' "'$ch"
-			res+=$(printf '%%%02X' $((code & 255)))
-		fi
-	done
-	printf '%s' "$res"
-}
+if [ "$#" -eq 0 ]
+then
+	open "explorer:///%23"
+	exit 0
+fi
 
-if [[ -d $arg ]]; then
-	path=$(cd -- "$arg" && pwd -P)
-	[[ $path == */ ]] || path+=/
-	exec open "explorer://$(encode "$path")"
-elif [[ -e $arg || -L $arg ]]; then
-	parent=$(cd -- "$(dirname -- "$arg")" && pwd -P)
-	base=$(basename -- "$arg")
-	path=${parent%/}/$base
-	exec open "explorerreveal://$(encode "$path")"
+target=$1
+
+if [ -d "$target" ]
+then
+	abs=$(cd "$target" && pwd -P)
+	if [ "${abs: -1}" != "/" ]
+	then
+		abs="$abs/"
+	fi
+	scheme=explorer
+elif [ -e "$target" ]
+then
+	dir=$(cd "$(dirname "$target")" && pwd -P)
+	if [ "${dir: -1}" != "/" ]
+	then
+		abs="$dir/$(basename "$target")"
+	else
+		abs="$dir$(basename "$target")"
+	fi
+	scheme=explorerreveal
 else
-	printf '%s: %s: No such file or directory\n' "$prog" "$arg" >&2
+	echo "explorer: no such file or directory: $target" >&2
 	exit 66
 fi
+
+urlencode() {
+	local LC_ALL=C s=$1 out="" c="" i=0 n=0
+	local len=${#s}
+	while [ $i -lt $len ]
+	do
+		c=${s:i:1}
+		case $c in
+			[a-zA-Z0-9.~_/-])
+				out+=$c
+				;;
+			*)
+				printf -v n '%d' "'$c"
+				out+=$(printf '%%%02X' "$((n & 0xFF))")
+				;;
+		esac
+		i=$((i + 1))
+	done
+	printf '%s' "$out"
+}
+
+open "$scheme://$(urlencode "$abs")"

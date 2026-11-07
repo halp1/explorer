@@ -236,6 +236,29 @@ final class URLSchemeTests: XCTestCase {
         XCTAssertEqual(AppURLScheme.parse(URL(string: "explorerreveal:///Users/me/a%C3%A9.txt")!), .reveal(URL(fileURLWithPath: "/Users/me/aé.txt")))
         XCTAssertEqual(AppURLScheme.encode("/a b/é"), "/a%20b/%C3%A9")
     }
+
+    func testScriptExecution() throws {
+        let script = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("Resources/explorer")
+        func run(_ args: [String]) -> (Int, String) {
+            let p = Process()
+            p.executableURL = script
+            p.arguments = args
+            let pipe = Pipe()
+            p.standardError = pipe
+            try? p.run()
+            p.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            return (Int(p.terminationStatus), String(decoding: data, as: UTF8.self))
+        }
+
+        XCTAssertEqual(run(["-h"]).0, 64)
+        XCTAssertEqual(run(["--help"]).0, 64)
+        XCTAssertEqual(run(["a", "b"]).0, 64)
+        
+        let (status, stderr) = run(["nonexistent"])
+        XCTAssertEqual(status, 66)
+        XCTAssertTrue(stderr.contains("no such file or directory"))
+    }
 }
 
 final class ContextMenuTests: XCTestCase {
