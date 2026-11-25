@@ -1,0 +1,56 @@
+name: Next release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: next-release
+  cancel-in-progress: true
+
+jobs:
+  release:
+    # The app links against the macOS 27 SDK, so it needs the Xcode 27 image.
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Stamp build number
+        run: |
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" Support/Explorer-Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0.0-next.${{ github.run_number }}" Support/Explorer-Info.plist
+
+      - name: Build
+        run: make release
+
+      - name: Package
+        run: |
+          codesign --verify --deep --strict build/Explorer.app
+          ditto -c -k --sequesterRsrc --keepParent build/Explorer.app Explorer.zip
+          shasum -a 256 Explorer.zip | tee Explorer.zip.sha256
+
+      - name: Publish
+        run: |
+          short=$(git rev-parse --short HEAD)
+          cat > notes.md <<EOF
+          Latest build of \`main\` at ${short}. Apple Silicon, macOS 13 or later.
+
+          Unzip, move Explorer.app to /Applications, then run:
+
+          \`\`\`
+          xattr -dr com.apple.quarantine /Applications/Explorer.app
+          \`\`\`
+          EOF
+          gh release delete next --cleanup-tag --yes || true
+          gh release create next Explorer.zip Explorer.zip.sha256 \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Next (build ${{ github.run_number }}, ${short})" \
+            --notes-file notes.md
