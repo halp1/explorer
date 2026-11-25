@@ -48,9 +48,28 @@ jobs:
           xattr -dr com.apple.quarantine /Applications/Explorer.app
           \`\`\`
           EOF
-          gh release delete next --cleanup-tag --yes || true
-          gh release create next Explorer.zip Explorer.zip.sha256 \
-            --target "$GITHUB_SHA" \
-            --prerelease \
-            --title "Next (build ${{ github.run_number }}, ${short})" \
-            --notes-file notes.md
+
+          # Removes every release on the next tag, including drafts left by a failed upload.
+          cleanup() {
+            local ids id
+            ids=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[] | select(.tag_name == "next") | .id') || return 1
+            for id in $ids; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id" || return 1
+            done
+            if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/next" >/dev/null 2>&1; then
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/next" || return 1
+            fi
+          }
+
+          for attempt in 1 2 3 4 5; do
+            if cleanup && gh release create next Explorer.zip Explorer.zip.sha256 \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --title "Next (build ${{ github.run_number }}, ${short})" \
+              --notes-file notes.md; then
+              exit 0
+            fi
+            echo "::warning::Publish attempt $attempt failed"
+            sleep $((attempt * 30))
+          done
+          exit 1
