@@ -96,12 +96,12 @@ public struct RecentShare: Codable, Hashable, Identifiable, Sendable {
 public enum RecentSharesStore {
     public static let shared = JSONStore<RecentShare>(file: AppPaths.support.appendingPathComponent("RecentShares.json"))
 
-    public static func remember(_ url: String, mountPath: String?) {
-        if let i = shared.items.firstIndex(where: { $0.url == url }) {
-            shared.items[i].lastMountPath = mountPath
-            shared.items[i].hidden = false
+    public static func remember(_ url: String, mountPath: String?, in store: JSONStore<RecentShare> = shared) {
+        if let i = store.items.firstIndex(where: { $0.url == url }) {
+            store.items[i].lastMountPath = mountPath
+            store.items[i].hidden = false
         } else {
-            shared.items.insert(RecentShare(url: url, lastMountPath: mountPath), at: 0)
+            store.items.insert(RecentShare(url: url, lastMountPath: mountPath), at: 0)
         }
     }
 }
