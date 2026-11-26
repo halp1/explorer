@@ -6,10 +6,14 @@ APP := build/Explorer.app
 SIGN_ID ?= -
 BIN = $(shell swift build $(SWIFT_FLAGS) -c $(CONFIG) --show-bin-path)
 
-.PHONY: all build app run test clean icon install release
+.PHONY: all build app run test clean icon install release dmg
 
 release:
 	$(MAKE) app CONFIG=release
+
+# Packages the release app into a styled drag-to-Applications disk image.
+dmg: release
+	bash scripts/make-dmg.sh
 
 # Builds release, replaces the canonical app safely, and launches it.
 install: release
