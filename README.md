@@ -1,6 +1,6 @@
 # Explorer
 
-Download [Explorer.zip](https://github.com/halp1/explorer/releases/download/next/Explorer.zip), unzip it, move Explorer.app to Applications, then run:
+Download [Explorer.dmg](https://github.com/halp1/explorer/releases/download/next/Explorer.dmg), open it and drag Explorer into Applications, then run:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Explorer.app
