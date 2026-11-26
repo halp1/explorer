@@ -10,10 +10,17 @@ final class FileOps: ObservableObject {
     let history = UndoHistory()
     let prefs: Preferences
     private let trashOverride: Trasher?
+    /// The clipboard. Injectable so tests never touch the user's real one.
+    let pasteboard: NSPasteboard
+    /// Shows the "Clipboard Replaced" notice. Injectable so tests can observe it without a modal alert.
+    var clipboardReplacedNotice: (NSWindow?) -> Void = { window in
+        Alerts.info("Clipboard Replaced", "The clipboard was replaced while items cut to Trash were waiting to be pasted. Those items remain in Trash.", window: window)
+    }
 
-    init(preferences: Preferences = .shared, trasher: Trasher? = nil) {
+    init(preferences: Preferences = .shared, trasher: Trasher? = nil, pasteboard: NSPasteboard = .general) {
         prefs = preferences
         trashOverride = trasher
+        self.pasteboard = pasteboard
     }
 
     /// Internal (Explorer-style) cut: items waiting to be moved on paste.
@@ -234,7 +241,7 @@ final class FileOps: ObservableObject {
 
     func copy(_ urls: [URL]) {
         guard urls.allSatisfy(LocalFileBoundary.accepts) else { return }
-        let pb = NSPasteboard.general
+        let pb = pasteboard
         pb.clearContents()
         pb.writeObjects(urls as [NSURL])
         internalCut = []
@@ -242,7 +249,7 @@ final class FileOps: ObservableObject {
     }
 
     func copyPaths(_ urls: [URL]) {
-        let pb = NSPasteboard.general
+        let pb = pasteboard
         pb.clearContents()
         pb.setString(urls.map { LocalFileBoundary.accepts($0) ? $0.path : $0.absoluteString }.joined(separator: "\n"), forType: .string)
     }
@@ -258,7 +265,7 @@ final class FileOps: ObservableObject {
         }
         start(.trash, urls, to: nil, window: window, title: "Cut via Trash") { [weak self] op in
             guard let self, op.state == .done, case .trashed(let pairs)? = op.undo else { return }
-            let pb = NSPasteboard.general
+            let pb = pasteboard
             pb.clearContents()
             pb.writeObjects(pairs.map(\.to) as [NSURL])
             self.cutViaTrash = (pairs, pb.changeCount)
@@ -267,16 +274,16 @@ final class FileOps: ObservableObject {
     }
 
     var clipboardURLs: [URL] {
-        ((NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []).filter(LocalFileBoundary.accepts)
+        ((pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []).filter(LocalFileBoundary.accepts)
     }
 
-    var canPaste: Bool { !clipboardURLs.isEmpty || NSPasteboard.general.canReadItem(withDataConformingToTypes: [UTType.image.identifier, UTType.plainText.identifier]) }
+    var canPaste: Bool { !clipboardURLs.isEmpty || pasteboard.canReadItem(withDataConformingToTypes: [UTType.image.identifier, UTType.plainText.identifier]) }
 
     /// Detects that the pasteboard was replaced while cut-via-trash items were waiting.
     func checkClipboardReplaced(window: NSWindow?) {
-        guard let c = cutViaTrash, NSPasteboard.general.changeCount != c.changeCount else { return }
+        guard let c = cutViaTrash, pasteboard.changeCount != c.changeCount else { return }
         cutViaTrash = nil
-        Alerts.info("Clipboard Replaced", "The clipboard was replaced while items cut to Trash were waiting to be pasted. Those items remain in Trash.", window: window)
+        clipboardReplacedNotice(window)
     }
 
     enum PasteMode { case auto, move, symlinks, aliases }
@@ -290,9 +297,9 @@ final class FileOps: ObservableObject {
         case .aliases: start(.alias, urls, to: dest, window: window, completion: done)
         case .move: start(.move, urls, to: dest, window: window, completion: done)
         case .auto:
-            if let c = cutViaTrash, NSPasteboard.general.changeCount == c.changeCount {
+            if let c = cutViaTrash, pasteboard.changeCount == c.changeCount {
                 cutViaTrash = nil
-                NSPasteboard.general.clearContents()
+                pasteboard.clearContents()
                 start(.move, c.pairs.map(\.to), to: dest, window: window, title: "Paste", completion: done)
             } else if !internalCut.isEmpty, Set(internalCut) == Set(urls) {
                 internalCut = []
