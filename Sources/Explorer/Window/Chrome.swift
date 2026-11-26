@@ -271,14 +271,7 @@ final class PathSuggestions {
 
     func show(for text: String, below field: NSView, pick: @escaping (String) -> Void) {
         onPick = pick
-        let expanded = (text as NSString).expandingTildeInPath
-        let dir = expanded.hasSuffix("/") ? expanded : (expanded as NSString).deletingLastPathComponent
-        let prefix = expanded.hasSuffix("/") ? "" : (expanded as NSString).lastPathComponent.lowercased()
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
-        items = names.filter { !$0.hasPrefix(".") && $0.lowercased().hasPrefix(prefix) }
-            .filter { var d: ObjCBool = false; return FileManager.default.fileExists(atPath: (dir as NSString).appendingPathComponent($0), isDirectory: &d) && d.boolValue }
-            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-            .prefix(12).map { (dir as NSString).appendingPathComponent($0) + "/" }
+        items = PathCompletion.candidates(for: text)
         guard !items.isEmpty, let w = field.window else { hide(); return }
         if panel == nil {
             let p = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
