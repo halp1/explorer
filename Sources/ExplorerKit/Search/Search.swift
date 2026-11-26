@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 
 /// Full-scan (non-Spotlight) name search. Results are a snapshot.
@@ -95,8 +96,24 @@ public final class SpotlightSearch: NSObject {
         NSPredicate(format: "kMDItemStarRating == %d", r)
     }
 
+    /// nil for a malformed query. `NSPredicate(fromMetadataQueryString:)` raises an Objective-C exception
+    /// on a syntax error, which Swift cannot catch, so the query is parsed by Metadata first.
     public static func rawQueryPredicate(_ raw: String) -> NSPredicate? {
-        NSPredicate(fromMetadataQueryString: raw)
+        guard MDQueryCreate(kCFAllocatorDefault, raw as CFString, nil, nil) != nil else { return nil }
+        return NSPredicate(fromMetadataQueryString: raw)
+    }
+
+    /// Case- and diacritic-insensitive "name contains `text`", as a raw query a .savedSearch can store.
+    /// Quotes, backslashes and wildcards in the text are escaped so they match literally.
+    public static func nameRawQuery(_ text: String) -> String {
+        var escaped = ""
+        for c in text {
+            if "\\\"'*?".contains(c) { escaped.append("\\") }
+            escaped.append(c)
+        }
+        // Metadata reads an escaped backslash right before the closing wildcard as an escaped wildcard,
+        // so text ending in a backslash still cannot match. Backslashes in file names are vanishingly rare.
+        return "(kMDItemFSName = \"*" + escaped + "*\"cd)"
     }
 }
 

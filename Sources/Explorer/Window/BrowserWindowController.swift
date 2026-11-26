@@ -643,7 +643,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSToo
     func saveSearch() {
         guard case .search(let s) = state.location else { return }
         guard let name = Alerts.prompt("Save Search", message: "Name for the saved search:", defaultValue: s.text, ok: "Save", selectStem: false) else { return }
-        let raw = s.rawQuery ?? "(kMDItemFSName = \"*\(s.text)*\"cd)"
+        let raw = s.rawQuery ?? SpotlightSearch.nameRawQuery(s.text)
         let file = SavedSearchFile.folder.appendingPathComponent(name + ".savedSearch")
         do {
             try SavedSearchFile(rawQuery: raw, scopes: [s.scope.path], displayName: name).write(to: file)
