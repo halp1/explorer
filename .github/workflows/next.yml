@@ -33,8 +33,9 @@ jobs:
       - name: Package
         run: |
           codesign --verify --deep --strict build/Explorer.app
-          ditto -c -k --sequesterRsrc --keepParent build/Explorer.app Explorer.zip
-          shasum -a 256 Explorer.zip | tee Explorer.zip.sha256
+          make dmg
+          cp build/Explorer.dmg Explorer.dmg
+          shasum -a 256 Explorer.dmg | tee Explorer.dmg.sha256
 
       - name: Publish
         run: |
@@ -42,7 +43,7 @@ jobs:
           cat > notes.md <<EOF
           Latest build of \`main\` at ${short}. Apple Silicon, macOS 13 or later.
 
-          Unzip, move Explorer.app to /Applications, then run:
+          Open Explorer.dmg and drag Explorer into Applications. If macOS won't open it, run:
 
           \`\`\`
           xattr -dr com.apple.quarantine /Applications/Explorer.app
@@ -62,7 +63,7 @@ jobs:
           }
 
           for attempt in 1 2 3 4 5; do
-            if cleanup && gh release create next Explorer.zip Explorer.zip.sha256 \
+            if cleanup && gh release create next Explorer.dmg Explorer.dmg.sha256 \
               --target "$GITHUB_SHA" \
               --prerelease \
               --title "Next (build ${{ github.run_number }}, ${short})" \
