@@ -26,6 +26,7 @@ public enum ArchiveError: LocalizedError, Equatable {
     case passwordRequired
     case wrongPassword
     case readOnly
+    case missingVolume(String)
     case failed(String)
     public var errorDescription: String? {
         switch self {
@@ -33,6 +34,7 @@ public enum ArchiveError: LocalizedError, Equatable {
         case .passwordRequired: return "The archive is corrupted, empty, or protected with a password."
         case .wrongPassword: return "The password is incorrect."
         case .readOnly: return "This archive format is read-only."
+        case .missingVolume(let name): return String(format: "The volume “%@” of this multi-volume archive is missing.", name)
         case .failed(let s): return s
         }
     }
@@ -71,6 +73,19 @@ public final class Archive {
             vols.append(u); i += 1
         }
         return vols.isEmpty ? [url] : vols
+    }
+
+    /// The first volume number absent from a multi-volume 7z whose later volumes exist, or nil.
+    /// Without this, 7-Zip reports a gap in the set the same way as an encrypted header.
+    var firstMissingVolume: String? {
+        guard format == .sevenZipMulti else { return nil }
+        let base = ArchiveFormat.baseName(url.lastPathComponent) + ".7z."
+        let dir = url.deletingLastPathComponent()
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        let numbers = names.compactMap { n -> Int? in n.hasPrefix(base) ? Int(n.dropFirst(base.count)) : nil }
+        guard let last = numbers.max() else { return nil }
+        let present = Set(numbers)
+        return (1...last).first { !present.contains($0) }.map { base + String(format: "%03d", $0) }
     }
 
     var usesPLzma: Bool { format == .sevenZip || format == .sevenZipMulti || format == .tar7z }
@@ -218,6 +233,7 @@ public final class Archive {
     }
 
     private func openPLzmaDecoder(delegate: DecoderDelegate? = nil) throws -> Decoder {
+        if let missing = firstMissingVolume { throw ArchiveError.missingVolume(missing) }
         let d = try Decoder(stream: try plzmaInStream(), fileType: .sevenZ, delegate: delegate)
         if let pw = password { try d.setPassword(pw) }
         do {
