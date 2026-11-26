@@ -238,14 +238,24 @@ final class URLSchemeTests: XCTestCase {
     }
 
     func testScriptExecution() throws {
-        let script = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("Resources/explorer")
+        // Bundle.main is the xctest runner under `swift test`, so resolve the script from the
+        // source tree instead.
+        let script = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/explorer")
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: script.path), script.path)
         func run(_ args: [String]) -> (Int, String) {
             let p = Process()
             p.executableURL = script
             p.arguments = args
             let pipe = Pipe()
             p.standardError = pipe
-            try? p.run()
+            // A launch failure must fail the test. Reading the pipe of a process that never
+            // started blocks forever, because this process still holds the write end.
+            do { try p.run() } catch {
+                XCTFail("could not run \(script.path): \(error)")
+                return (-1, "")
+            }
             p.waitUntilExit()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             return (Int(p.terminationStatus), String(decoding: data, as: UTF8.self))
