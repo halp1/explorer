@@ -11,14 +11,14 @@ The keyboard reference is [Folders Pro](</Applications/Folders Pro.app>) (com.mi
 | Icons / List / Table / Gallery views, ⌘1–4 | ✅ | snapshots in `build/shots` |
 | Archive view (name / modified / original / compressed / kind) | ✅ | |
 | Toolbar order (sidebar, dup window/tab, back/fwd/up, title, new folder, view, sort, group, remember, search) | ✅ | |
-| Path bar: interactive or string, top or bottom, ⇧⌘G with completions | 🟡 | |
+| Path bar: interactive or string, top or bottom, ⇧⌘G with completions | 🟡 | ⇧⌘G completion listing ✅ `PathCompletionTests.testGoToFolderCompletions`. Path bar styles and placement still unexercised. |
 | Status bar with progress stripe, pause/cancel | 🟡 | |
 | Info panel: preview, dates, EXIF/GPS, media, tags, rating, comment, Open With, hidden/locked, permissions, custom icon | ✅ | rendered |
 | Gallery tools: zoom, lock, backgrounds, flip/rotate, Live Text | 🟡 | |
 | Shelf flap | 🟡 | |
 | Grouping (kind/date/size/tags/rating) and folders first/last | ✅ | unit tests |
 | Remember view options per folder (+ inherit to subfolders) | ✅ | unit tests |
-| Tabs, Customize Tab, Tab Sets | 🟡 | |
+| Tabs, Customize Tab, Tab Sets | 🟡 | Tab Set persistence ✅ `StoreParityTests.testTabSetsSurviveARelaunchAndReplaceByName`. Opening a set as window tabs and Customize Tab still unexercised. |
 
 ## Keyboard shortcuts
 
@@ -28,7 +28,7 @@ The keyboard reference is [Folders Pro](</Applications/Folders Pro.app>) (com.mi
 - Tree shortcuts target the selected node, not retained file-view selection. Option-number shortcuts count only visible unselectable top-level groups. Option-arrow navigation expands groups, skips empty groups, and stops at boundaries.
 - Show All Tabs is explicitly registered on Shift-Command-backslash using native window tab overview.
 - Text editors retain Command-arrow and Command-Delete behavior. Unsupported tree file actions are disabled rather than applied to stale selection.
-- Regression coverage includes resolver branches, modifier rejection, editor/menu protection, tree planning, actual Gallery responder navigation, Command-Down and explicit file-popup scope through every file view, real private-trash deletion with menu Undo/Redo, immediate queued Undo, and text-editor undo isolation. `make test` passed with 15 app tests and 79 core tests, including one skipped hardware-only MTP test.
+- Regression coverage includes resolver branches, modifier rejection, editor/menu protection, tree planning, actual Gallery responder navigation, Command-Down and explicit file-popup scope through every file view, real private-trash deletion with menu Undo/Redo, immediate queued Undo, and text-editor undo isolation. `make test` passed with 19 app tests and 88 core tests, including one skipped hardware-only MTP test.
 - Scope exclusion: Shift-Command-K Remote Connections is not registered. Explorer has no SFTP, FTP, FTPS, or S3 backend. No placeholder command is presented.
 - Verification limit: not every OS dialog, non-QWERTY keyboard layout, physical-device operation, or full menu-driven workflow has been exercised end-to-end. RTL command resolution is unit-tested, not tested with a live RTL system session.
 
@@ -39,7 +39,7 @@ The keyboard reference is [Folders Pro](</Applications/Folders Pro.app>) (com.mi
 | Conflicts: Skip / Keep Both / Replace / Replace Older / Merge, Apply to All | ✅ | unit tests |
 | Undo/redo, including swaps and multi-item deletion | ✅ | Explicit menu target preserves editor undo. Failed built-in actions retain history and roll back partial moves. Custom closures must be atomic on failure. |
 | Trash plus private trash fallback | ✅ | |
-| Cut via Trash / internal cut / cloud rule / clipboard-replaced warning | 🟡 | |
+| Cut via Trash / internal cut / cloud rule / clipboard-replaced warning | 🟡 | Cut via Trash, internal cut and the warning ✅ `CutViaTrashTests`. The cloud rule needs a real `~/Library/CloudStorage` path. |
 | Paste as symlinks/aliases, Paste into Folder, Move Item Here | ✅ (core) | |
 | New folder / with selection / empty file / Office docs / from clipboard / via scriptable apps | ✅ (templates tested) | |
 | Batch Rename (7 step types, preview, collisions) | ✅ | unit tests |
@@ -56,14 +56,15 @@ Undo history is session-local. Files deleted before an app restart must be resto
 | zip / 7z / tar / tar.gz / bz2 / xz / tar.7z create, browse, extract, add, remove | ✅ |
 | Password zip (AES-256) and 7z | ✅ |
 | Single-file tar.* → .gz etc. | ✅ |
-| rar, multi-volume 7z read | 🟡 |
-| Filename encoding picker | 🟡 |
+| multi-volume 7z read | ✅ `ArchiveParityTests.testMultiVolume7zListsAndExtractsAcrossEveryVolume` (needs 7zz, else skipped) |
+| rar read | 🟡 no local tool can create a RAR fixture |
+| Filename encoding picker | ✅ `ArchiveParityTests.testFilenameEncodingPickerDecodesLegacyZipNames` |
 
 ## Integrations
 | Feature | Status |
 |---|---|
-| Spotlight / full-scan search, Save Search (.savedSearch) | ✅ (file format) / 🟡 UI |
-| Network share discovery, mount, pin/hide/forget, remount pinned | 🟡 |
+| Spotlight / full-scan search, Save Search (.savedSearch) | ✅ (file format, saved name query `SavedSearchTests`) / 🟡 UI |
+| Network share discovery, mount, pin/hide/forget, remount pinned | 🟡 pin/hide/forget state ✅ `StoreParityTests.testSharePinHideForgetAndRemountState`. Discovery and mounting need a server. |
 | Git badges + stage/unstage/discard/commit/pull/push | ✅ |
 | Actions (shell / AppleScript, {path} {name} {stem} {dir}) | ✅ |
 | CLI `explorer`, URL schemes, Services, AppleScript sdef, App Intents | ✅ (parsing) / 🟡 install |
